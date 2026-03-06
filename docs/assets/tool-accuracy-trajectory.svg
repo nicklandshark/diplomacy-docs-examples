@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="820" viewBox="0 0 1400 820" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1400" y2="820" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7F3EA"/>
+      <stop offset="1" stop-color="#F2ECE0"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#2F2418" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0 0 L12 6 L0 12 Z" fill="#7B5B3E"/>
+    </marker>
+    <style>
+      .title { font: 700 34px "IBM Plex Sans", Helvetica, sans-serif; fill: #2F2418; }
+      .subtitle { font: 500 16px "IBM Plex Sans", Helvetica, sans-serif; fill: #5D4B3A; }
+      .lane { font: 700 18px "IBM Plex Sans", Helvetica, sans-serif; fill: #2F2418; }
+      .label { font: 700 15px "IBM Plex Sans", Helvetica, sans-serif; fill: #2F2418; }
+      .body { font: 500 13px "IBM Plex Sans", Helvetica, sans-serif; fill: #4A4036; }
+      .chip { font: 700 12px "IBM Plex Sans", Helvetica, sans-serif; fill: #7A4B1D; }
+      .note { font: 500 14px "IBM Plex Sans", Helvetica, sans-serif; fill: #433629; }
+      .tiny { font: 600 12px "IBM Plex Sans", Helvetica, sans-serif; fill: #66594D; }
+    </style>
+  </defs>
+
+  <rect width="1400" height="820" rx="28" fill="url(#bg)"/>
+
+  <text x="56" y="72" class="title">Recipe 1 Trajectory: Tool Accuracy</text>
+  <text x="56" y="104" class="subtitle">A successful rollout teaches the agent the mechanics of the Diplomacy harness before it learns long-horizon state control.</text>
+
+  <rect x="44" y="144" width="1312" height="110" rx="24" fill="#FFF7ED"/>
+  <rect x="44" y="272" width="1312" height="110" rx="24" fill="#F3EFE4"/>
+  <rect x="44" y="400" width="1312" height="110" rx="24" fill="#EEF4ED"/>
+  <rect x="44" y="528" width="1312" height="110" rx="24" fill="#F8ECE5"/>
+
+  <text x="72" y="186" class="lane">Trainable policy</text>
+  <text x="72" y="314" class="lane">Session tools and state</text>
+  <text x="72" y="442" class="lane">Counterpart actor</text>
+  <text x="72" y="570" class="lane">Reward + episode record</text>
+
+  <g filter="url(#shadow)">
+    <rect x="190" y="164" width="160" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="210" y="191" class="label">T0 Inspect state</text>
+    <text x="210" y="211" class="body">Read phase status</text>
+    <text x="210" y="228" class="body">and inbox summary.</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="384" y="164" width="182" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="404" y="191" class="label">T1 Delegate work</text>
+    <text x="404" y="211" class="body">Root model calls</text>
+    <text x="404" y="228" class="body">REPL + llm_batch.</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="594" y="292" width="176" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="614" y="319" class="label">T2 Send DM</text>
+    <text x="614" y="339" class="body">send_message([...])</text>
+    <text x="614" y="356" class="body">opens the channel.</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="806" y="420" width="196" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="826" y="447" class="label">T3 Reply arrives</text>
+    <text x="826" y="467" class="body">Counterpart returns</text>
+    <text x="826" y="484" class="body">the required order.</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1034" y="292" width="206" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="1054" y="319" class="label">T4 Read + inspect</text>
+    <text x="1054" y="339" class="body">Read conversation and</text>
+    <text x="1054" y="356" class="body">legal orders together.</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1170" y="164" width="150" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="1190" y="191" class="label">T5 Submit</text>
+    <text x="1190" y="211" class="body">Complete legal set</text>
+    <text x="1190" y="228" class="body">with canonical order.</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1036" y="548" width="260" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="1056" y="575" class="label">T6 Score the episode</text>
+    <text x="1056" y="595" class="body">Rubric checks send, read,</text>
+    <text x="1056" y="612" class="body">submission, constraints, budget.</text>
+  </g>
+
+  <line x1="350" y1="200" x2="384" y2="200" stroke="#7B5B3E" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="566" y1="214" x2="624" y2="292" stroke="#7B5B3E" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="770" y1="328" x2="826" y2="420" stroke="#7B5B3E" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="1002" y1="456" x2="1084" y2="364" stroke="#7B5B3E" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="1240" y1="292" x2="1240" y2="236" stroke="#7B5B3E" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="1246" y1="236" x2="1210" y2="548" stroke="#7B5B3E" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <text x="208" y="148" class="tiny">observe</text>
+  <text x="430" y="148" class="tiny">plan</text>
+  <text x="654" y="276" class="tiny">act</text>
+  <text x="878" y="404" class="tiny">reply</text>
+  <text x="1116" y="276" class="tiny">verify</text>
+  <text x="1214" y="148" class="tiny">finalize</text>
+
+  <g filter="url(#shadow)">
+    <rect x="78" y="674" width="1244" height="106" rx="24" fill="#FFFDF9"/>
+    <text x="106" y="708" class="label">What this trajectory teaches</text>
+    <text x="106" y="735" class="note">1. Tool routing: the policy learns when to stay at the root and when to delegate.</text>
+    <text x="106" y="756" class="note">2. Protocol discipline: message first, read after the reply, then submit complete legal orders.</text>
+    <text x="700" y="735" class="note">3. Training signal: the final record includes tool trace, transcript, legal submission, and scalar reward.</text>
+    <text x="700" y="756" class="note">4. Reward is mostly process-oriented, so failures are easy to debug and easy to shape.</text>
+  </g>
+
+  <rect x="1088" y="126" width="234" height="28" rx="14" fill="#F7E0CC"/>
+  <text x="1102" y="145" class="chip">mechanical competence before strategy</text>
+</svg>

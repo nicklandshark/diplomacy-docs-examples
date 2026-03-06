@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860" fill="none">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="1400" y2="860" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7F2E8"/>
+      <stop offset="1" stop-color="#EEE7DA"/>
+    </linearGradient>
+    <filter id="shadow2" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#261A10" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow2" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0 0 L12 6 L0 12 Z" fill="#7A5234"/>
+    </marker>
+    <style>
+      .title { font: 700 34px "IBM Plex Sans", Helvetica, sans-serif; fill: #2B2118; }
+      .subtitle { font: 500 16px "IBM Plex Sans", Helvetica, sans-serif; fill: #5E4E40; }
+      .lane { font: 700 18px "IBM Plex Sans", Helvetica, sans-serif; fill: #2B2118; }
+      .label { font: 700 15px "IBM Plex Sans", Helvetica, sans-serif; fill: #2B2118; }
+      .body { font: 500 13px "IBM Plex Sans", Helvetica, sans-serif; fill: #4A3E34; }
+      .note { font: 500 14px "IBM Plex Sans", Helvetica, sans-serif; fill: #43362A; }
+      .tiny { font: 600 12px "IBM Plex Sans", Helvetica, sans-serif; fill: #6A5B4D; }
+      .chip { font: 700 12px "IBM Plex Sans", Helvetica, sans-serif; fill: #7A4B1D; }
+    </style>
+  </defs>
+
+  <rect width="1400" height="860" rx="28" fill="url(#bg2)"/>
+
+  <text x="56" y="72" class="title">Recipe 2 Trajectory: Transition State</text>
+  <text x="56" y="104" class="subtitle">A successful rollout combines communication, aligned submissions, and a verified post-adjudication board change.</text>
+
+  <rect x="44" y="144" width="1312" height="110" rx="24" fill="#FFF7ED"/>
+  <rect x="44" y="272" width="1312" height="110" rx="24" fill="#EDF4EC"/>
+  <rect x="44" y="400" width="1312" height="110" rx="24" fill="#F2EFE5"/>
+  <rect x="44" y="528" width="1312" height="110" rx="24" fill="#F8EDE7"/>
+
+  <text x="72" y="186" class="lane">Trainable policy</text>
+  <text x="72" y="314" class="lane">Counterpart actor</text>
+  <text x="72" y="442" class="lane">Shared Diplomacy state</text>
+  <text x="72" y="570" class="lane">Reward stack</text>
+
+  <g filter="url(#shadow2)">
+    <rect x="176" y="164" width="184" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="196" y="191" class="label">T0 Read the target</text>
+    <text x="196" y="211" class="body">Observe board, counterpart,</text>
+    <text x="196" y="228" class="body">and desired transition.</text>
+  </g>
+
+  <g filter="url(#shadow2)">
+    <rect x="398" y="164" width="188" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="418" y="191" class="label">T1 Propose a plan</text>
+    <text x="418" y="211" class="body">Message the counterpart</text>
+    <text x="418" y="228" class="body">through the harness.</text>
+  </g>
+
+  <g filter="url(#shadow2)">
+    <rect x="624" y="292" width="194" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="644" y="319" class="label">T2 Commitment reply</text>
+    <text x="644" y="339" class="body">Counterpart reveals an</text>
+    <text x="644" y="356" class="body">aligned anchor order.</text>
+  </g>
+
+  <g filter="url(#shadow2)">
+    <rect x="862" y="164" width="196" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="882" y="191" class="label">T3 Update the plan</text>
+    <text x="882" y="211" class="body">Read legal orders, interpret</text>
+    <text x="882" y="228" class="body">the reply, choose actions.</text>
+  </g>
+
+  <g filter="url(#shadow2)">
+    <rect x="1096" y="164" width="198" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="1116" y="191" class="label">T4 Submit aligned orders</text>
+    <text x="1116" y="211" class="body">Tracked agent commits to</text>
+    <text x="1116" y="228" class="body">the coordinated line.</text>
+  </g>
+
+  <g filter="url(#shadow2)">
+    <rect x="1034" y="292" width="214" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="1054" y="319" class="label">T5 Counterpart submits</text>
+    <text x="1054" y="339" class="body">Background actor locks in</text>
+    <text x="1054" y="356" class="body">the support or response.</text>
+  </g>
+
+  <g filter="url(#shadow2)">
+    <rect x="842" y="420" width="224" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="862" y="447" class="label">T6 Adjudication happens</text>
+    <text x="862" y="467" class="body">Orders are processed and</text>
+    <text x="862" y="484" class="body">the board transitions.</text>
+  </g>
+
+  <g filter="url(#shadow2)">
+    <rect x="1074" y="548" width="230" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="1094" y="575" class="label">T7 Score the rollout</text>
+    <text x="1094" y="595" class="body">Process rewards + final</text>
+    <text x="1094" y="612" class="body">transition target reward.</text>
+  </g>
+
+  <line x1="360" y1="200" x2="398" y2="200" stroke="#7A5234" stroke-width="3" marker-end="url(#arrow2)"/>
+  <line x1="586" y1="214" x2="654" y2="292" stroke="#7A5234" stroke-width="3" marker-end="url(#arrow2)"/>
+  <line x1="818" y1="328" x2="892" y2="236" stroke="#7A5234" stroke-width="3" marker-end="url(#arrow2)"/>
+  <line x1="1058" y1="200" x2="1096" y2="200" stroke="#7A5234" stroke-width="3" marker-end="url(#arrow2)"/>
+  <line x1="1194" y1="236" x2="1142" y2="292" stroke="#7A5234" stroke-width="3" marker-end="url(#arrow2)"/>
+  <line x1="1142" y1="364" x2="972" y2="420" stroke="#7A5234" stroke-width="3" marker-end="url(#arrow2)"/>
+  <line x1="1010" y1="492" x2="1110" y2="548" stroke="#7A5234" stroke-width="3" marker-end="url(#arrow2)"/>
+
+  <g filter="url(#shadow2)">
+    <rect x="124" y="422" width="256" height="68" rx="18" fill="#FFFFFF"/>
+    <text x="144" y="448" class="label">Target state example</text>
+    <text x="144" y="468" class="body">"FRANCE occupies ENG"</text>
+    <text x="144" y="485" class="body">after adjudication.</text>
+  </g>
+
+  <g filter="url(#shadow2)">
+    <rect x="146" y="548" width="292" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="166" y="575" class="label">Process rewards</text>
+    <text x="166" y="595" class="body">contact, read, commitment,</text>
+    <text x="166" y="612" class="body">aligned submission</text>
+  </g>
+
+  <g filter="url(#shadow2)">
+    <rect x="470" y="548" width="244" height="72" rx="18" fill="#FFFFFF"/>
+    <text x="490" y="575" class="label">Outcome reward</text>
+    <text x="490" y="595" class="body">transition target satisfied</text>
+    <text x="490" y="612" class="body">after board update</text>
+  </g>
+
+  <text x="212" y="148" class="tiny">observe</text>
+  <text x="450" y="148" class="tiny">persuade</text>
+  <text x="688" y="276" class="tiny">commit</text>
+  <text x="934" y="148" class="tiny">plan</text>
+  <text x="1152" y="148" class="tiny">act</text>
+  <text x="1088" y="276" class="tiny">align</text>
+  <text x="908" y="404" class="tiny">transition</text>
+
+  <g filter="url(#shadow2)">
+    <rect x="78" y="688" width="1244" height="118" rx="24" fill="#FFFDF9"/>
+    <text x="106" y="722" class="label">What this trajectory teaches</text>
+    <text x="106" y="749" class="note">1. Communication is now causal: messages matter because they change what other actors are likely to submit.</text>
+    <text x="106" y="770" class="note">2. The rollout needs two reward layers: dense process feedback and a sparse final board outcome.</text>
+    <text x="740" y="749" class="note">3. The final reward should stay grounded in adjudicated state, not persuasive style alone.</text>
+    <text x="740" y="770" class="note">4. This is the right bridge from harness competence to actual strategic training.</text>
+  </g>
+
+  <rect x="1032" y="126" width="290" height="28" rx="14" fill="#F7E0CC"/>
+  <text x="1046" y="145" class="chip">process rewards plus adjudicated outcome</text>
+</svg>
