@@ -51,7 +51,7 @@ The cookbook is vendored under `vendor/tinker-cookbook/`, and `pyproject.toml` p
 This uses Modal for rollout isolation.
 
 ```bash
-python scripts/train_tinker_grpo_curriculum.py \
+uv run python scripts/train_tinker_grpo_curriculum.py \
   --model-name Qwen/Qwen3.5-27B \
   --wandb-project diplomacy-grpo \
   --openrouter-model google/gemini-3-flash-preview \
@@ -63,7 +63,7 @@ python scripts/train_tinker_grpo_curriculum.py \
 This keeps rollouts in-process and is useful for debugging the trainer path without Modal.
 
 ```bash
-python scripts/train_tinker_grpo_curriculum.py \
+uv run python scripts/train_tinker_grpo_curriculum.py \
   --model-name Qwen/Qwen3.5-27B \
   --rollout-backend local \
   --stage1-train-examples 8 \
@@ -71,6 +71,8 @@ python scripts/train_tinker_grpo_curriculum.py \
   --stage2-train-examples 4 \
   --stage2-eval-examples 2
 ```
+
+The local backend is still a real trainer run. It only removes Modal isolation, so it still requires Tinker, OpenRouter, and W&B credentials.
 
 ## Modal Options
 
@@ -107,6 +109,8 @@ source .venv/bin/activate
 marimo edit notebooks/tinker_grpo_modal.py
 ```
 
+The trainer subprocess uses the same Python interpreter that launched marimo, so `uv run marimo edit ...` and an activated `.venv` both keep the notebook and CLI on the same dependency set.
+
 Before opening it, make sure you have:
 
 - run `uv sync`
@@ -119,6 +123,7 @@ The notebook provides:
 - environment and key preflight checks
 - the exact CLI command that will be run
 - one-shot subprocess launch of the CLI trainer
+- launch blocking with an explicit missing-credentials message when required env vars are absent
 - process status for the current notebook session
 - manifest inspection for `curriculum_manifest.json`
 
@@ -127,9 +132,10 @@ Recommended workflow:
 1. Open the notebook with `uv run marimo edit notebooks/tinker_grpo_modal.py`.
 2. Fill in the model, backend, stage sizes, seeds, and Modal resource knobs.
 3. Confirm the preflight block shows the required credentials.
-4. Inspect the rendered CLI command before launching.
-5. Click `Launch training` once to start the trainer subprocess.
-6. Watch the process panel and manifest panel as the run advances.
+4. If credentials are missing, fix those first; `Launch training` stays blocked until the required env vars are present.
+5. Inspect the rendered CLI command before launching.
+6. Click `Launch training` once to start the trainer subprocess.
+7. Watch the process panel and manifest panel as the run advances.
 
 Important behavior:
 

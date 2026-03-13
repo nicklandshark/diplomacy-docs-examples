@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -29,9 +30,10 @@ def build_train_command(
     renderer_name: str | None = None,
     run_name: str | None = None,
     initial_checkpoint_path: str | None = None,
+    python_executable: str | None = None,
 ) -> list[str]:
     command = [
-        "python",
+        python_executable or sys.executable,
         str(script_path),
         "--model-name",
         model_name,
@@ -103,6 +105,7 @@ def launch_once(
     launch_token: Any,
     command: Sequence[str],
     cwd: Path,
+    launch_blocker: str | None = None,
     popen_factory: Any = subprocess.Popen,
 ) -> tuple[dict[str, Any], str]:
     snapshot = get_process_state(state)
@@ -118,6 +121,10 @@ def launch_once(
         state["last_launch_token"] = launch_token
         return get_process_state(state), f"Training already running with PID {snapshot['pid']}."
 
+    if launch_blocker:
+        state["last_launch_token"] = launch_token
+        return get_process_state(state), f"Launch blocked: {launch_blocker}"
+
     process = popen_factory(list(command), cwd=str(cwd))
     state["process"] = process
     state["pid"] = process.pid
@@ -128,9 +135,31 @@ def launch_once(
     return get_process_state(state), f"Spawned PID {process.pid}."
 
 
-def preflight_env() -> dict[str, bool]:
-    return {
+def preflight_env() -> dict[str, Any]:
+    required = {
         "TINKER_API_KEY": bool(os.environ.get("TINKER_API_KEY")),
         "OPENROUTER_API_KEY": bool(os.environ.get("OPENROUTER_API_KEY")),
         "WANDB_API_KEY": bool(os.environ.get("WANDB_API_KEY")),
     }
+    optional = {
+        "TINKER_BASE_URL": bool(os.environ.get("TINKER_BASE_URL")),
+    }
+    modal_env_auth = {
+        "MODAL_TOKEN_ID": bool(os.environ.get("MODAL_TOKEN_ID")),
+        "MODAL_TOKEN_SECRET": bool(os.environ.get("MODAL_TOKEN_SECRET")),
+    }
+    return {
+        "required": required,
+        "optional": optional,
+        "modal_env_auth": modal_env_auth,
+        "required_ok": all(required.values()),
+        "modal_env_auth_ok": all(modal_env_auth.values()),
+    }
+
+
+def format_missing_required_env_message(preflight: dict[str, Any] | None = None) -> str | None:
+    snapshot = preflight if preflight is not None else preflight_env()
+    missing = [name for name, is_present in snapshot["required"].items() if not is_present]
+    if not missing:
+        return None
+    return "missing required env vars: " + ", ".join(missing)

@@ -44,6 +44,8 @@ source .venv/bin/activate
 marimo edit notebooks/tinker_grpo_modal.py
 ```
 
+The notebook launches the trainer with the same Python interpreter that launched marimo. If required credentials are missing, `Launch training` stays blocked and lists the missing env vars instead of spawning a failing subprocess.
+
 What the notebook does:
 
 - lets you configure the training run with widgets
@@ -60,11 +62,11 @@ The launch button is idempotent per click event, so rerendering the notebook doe
 The notebook is only a control surface. The actual trainer is still the CLI:
 
 ```bash
-python scripts/train_tinker_grpo_curriculum.py \
+uv run python scripts/train_tinker_grpo_curriculum.py \
   --model-name Qwen/Qwen3.5-27B \
   --wandb-project diplomacy-grpo \
   --openrouter-model google/gemini-3-flash-preview \
   --rollout-backend modal
 ```
 
-Use `--rollout-backend local` for an in-process smoke run.
+Use `--rollout-backend local` for an in-process smoke run. This only skips Modal isolation; it still requires Tinker, OpenRouter, and W&B credentials.

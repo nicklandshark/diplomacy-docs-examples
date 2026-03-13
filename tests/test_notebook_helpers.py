@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from tinker_training.notebook_helpers import (
     build_train_command,
+    format_missing_required_env_message,
     get_process_state,
     launch_once,
+    preflight_env,
     resolve_manifest_path,
 )
 
@@ -57,7 +60,7 @@ def test_build_train_command_and_manifest_path() -> None:
     )
 
     assert command[:4] == [
-        "python",
+        sys.executable,
         "scripts/train_tinker_grpo_curriculum.py",
         "--model-name",
         "Qwen/Qwen3.5-27B",
@@ -120,3 +123,71 @@ def test_launch_once_is_idempotent_per_button_event(tmp_path) -> None:
     assert snapshot["pid"] == 1001
     assert len(popen_factory.calls) == 2
     assert get_process_state(state)["last_launch_token"] == 2
+
+
+def test_preflight_env_reports_required_and_optional_vars(monkeypatch) -> None:
+    for name in (
+        "TINKER_API_KEY",
+        "OPENROUTER_API_KEY",
+        "WANDB_API_KEY",
+        "TINKER_BASE_URL",
+        "MODAL_TOKEN_ID",
+        "MODAL_TOKEN_SECRET",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    monkeypatch.setenv("TINKER_API_KEY", "tinker-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key")
+    monkeypatch.setenv("WANDB_API_KEY", "wandb-key")
+    monkeypatch.setenv("TINKER_BASE_URL", "https://tinker.example")
+    monkeypatch.setenv("MODAL_TOKEN_ID", "modal-id")
+
+    preflight = preflight_env()
+
+    assert preflight["required"] == {
+        "TINKER_API_KEY": True,
+        "OPENROUTER_API_KEY": True,
+        "WANDB_API_KEY": True,
+    }
+    assert preflight["optional"] == {
+        "TINKER_BASE_URL": True,
+    }
+    assert preflight["modal_env_auth"] == {
+        "MODAL_TOKEN_ID": True,
+        "MODAL_TOKEN_SECRET": False,
+    }
+    assert preflight["required_ok"] is True
+    assert preflight["modal_env_auth_ok"] is False
+
+
+def test_format_missing_required_env_message(monkeypatch) -> None:
+    monkeypatch.delenv("TINKER_API_KEY", raising=False)
+    monkeypatch.delenv("WANDB_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key")
+
+    assert (
+        format_missing_required_env_message()
+        == "missing required env vars: TINKER_API_KEY, WANDB_API_KEY"
+    )
+
+
+def test_launch_once_blocks_without_required_env(tmp_path) -> None:
+    popen_factory = _FakePopenFactory()
+    state: dict[str, object] = {}
+    command = [sys.executable, "scripts/train_tinker_grpo_curriculum.py"]
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+
+    snapshot, message = launch_once(
+        state,
+        launch_token=1,
+        command=command,
+        cwd=cwd,
+        launch_blocker="missing required env vars: TINKER_API_KEY",
+        popen_factory=popen_factory,
+    )
+
+    assert snapshot["pid"] is None
+    assert message == "Launch blocked: missing required env vars: TINKER_API_KEY"
+    assert len(popen_factory.calls) == 0
+    assert get_process_state(state)["last_launch_token"] == 1

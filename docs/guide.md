@@ -775,4 +775,3 @@ Once those three pieces are in place, you have a full stack for training a Sedon
 - a clean evaluation path
 
 If you are building for Diplomacy, that is the correct sequence. First teach the policy to operate the environment. Then teach it to move the world.
-s
