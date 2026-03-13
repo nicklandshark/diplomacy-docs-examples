@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import sys
 from dataclasses import asdict, dataclass
@@ -13,6 +14,23 @@ from pathlib import Path
 from typing import Any
 
 from openai import AsyncOpenAI
+from rich.console import Console
+from rich.syntax import Syntax
+from rich.text import Text
+
+console = Console()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("aiohttp").setLevel(logging.WARNING)
+logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -23,7 +41,7 @@ import environments.tool_accuracy as tool_accuracy
 
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "openai/gpt-5.4"
+DEFAULT_MODEL = "google/gemini-3-flash-preview"
 DEFAULT_OUTPUT_DIR = ".tmp/rollouts"
 STANDARD_POWERS = [
     "AUSTRIA",
@@ -35,13 +53,6 @@ STANDARD_POWERS = [
     "TURKEY",
 ]
 
-
-class NoopAsyncScoreSem:
-    async def __aenter__(self) -> None:
-        return None
-
-    async def __aexit__(self, exc_type, exc, tb) -> bool:
-        return False
 
 
 @dataclass
@@ -188,6 +199,107 @@ def build_env(args: argparse.Namespace, seed: int):
     return full_press.load_environment(**common_kwargs)
 
 
+POWER_COLORS: dict[str, str] = {
+    "AUSTRIA": "red",
+    "ENGLAND": "blue",
+    "FRANCE": "cyan",
+    "GERMANY": "bright_black",
+    "ITALY": "green",
+    "RUSSIA": "magenta",
+    "TURKEY": "yellow",
+}
+
+
+def _patch_execute_code(env, label: str = "root", color: str = "bold cyan") -> None:
+    """Patch env._execute_code to print code as it's executed."""
+    original = env._execute_code
+    repl_lang = env.repl_language  # "bash" or "python"
+
+    async def patched(code: str, state) -> dict[str, Any]:
+        turn = state.get("repl_call_count", 0) + 1
+
+        # Header
+        header = Text(f"\n── {label} ", style=color)
+        header.append(f"turn {turn} ", style=f"{color} dim")
+        header.append(f"[{repl_lang}] ", style="bold yellow")
+        header.append("─" * max(1, 50 - len(f"── {label} turn {turn} [{repl_lang}] ")), style="dim")
+        console.print(header)
+
+        # Code
+        console.print(Syntax(code.strip(), repl_lang, theme="monokai", line_numbers=False, word_wrap=True))
+
+        # Execute
+        result = await original(code, state)
+
+        # Output
+        status = result.get("status", "")
+        stdout = result.get("stdout", "")
+        stderr = result.get("stderr", "")
+        output = (stdout + "\n" + stderr).strip()
+        status_style = "green" if status == "success" else "red"
+        console.print(Text(f"  [{status}]", style=status_style), end=" ")
+
+        if output:
+            lines = output.splitlines()
+            if len(lines) > 20:
+                output_text = "\n".join(lines[:20]) + f"\n... ({len(lines) - 20} more lines)"
+            else:
+                output_text = "\n".join(lines)
+            console.print(Text(output_text, style="dim"))
+        else:
+            console.print(Text("(no output)", style="dim"))
+
+        return result
+
+    env._execute_code = patched
+
+
+def _patch_actor_rollouts(env) -> None:
+    """Patch _run_actor_rollout to also instrument actor envs."""
+    original_run = env._run_actor_rollout
+
+    async def patched_run(actor_name: str, state):
+        # Patch _build_actor_env to instrument the actor env
+        original_build = env._build_actor_env
+
+        def patched_build():
+            actor_env = original_build()
+            color = POWER_COLORS.get(actor_name, "white")
+            _patch_execute_code(actor_env, label=actor_name, color=f"bold {color}")
+            return actor_env
+
+        env._build_actor_env = patched_build
+        try:
+            return await original_run(actor_name, state)
+        finally:
+            env._build_actor_env = original_build
+
+    env._run_actor_rollout = patched_run
+
+
+def print_summary(state: dict[str, Any]) -> None:
+    """Print final rollout summary."""
+    info = state.get("info", {})
+    if not isinstance(info, dict):
+        info = {}
+
+    console.print()
+    console.print(Text("═" * 60, style="bold"))
+    console.print(Text("  ROLLOUT COMPLETE", style="bold green"))
+    console.print(Text("═" * 60, style="bold"))
+
+    tracked = info.get("tracked_power", "?")
+    reward = state.get("reward", "?")
+    reward_color = "green" if (reward or 0) > 0 else "red"
+    console.print(f"  Power:               [bold cyan]{tracked}[/bold cyan]")
+    console.print(f"  Reward:              [bold {reward_color}]{reward}[/bold {reward_color}]")
+    console.print(f"  Final answer:        [bold]{state.get('final_answer', '')}[/bold]")
+    console.print(f"  Stop condition:      {state.get('stop_condition', '')}")
+    rejected = state.get("rejected_tool_calls", 0)
+    console.print(f"  Rejected tool calls: [{'red' if rejected else 'green'}]{rejected}[/]")
+    console.print()
+
+
 def compact_trace(trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
     compact: list[dict[str, Any]] = []
     for item in trace:
@@ -204,7 +316,14 @@ def compact_trace(trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def run_once(args: argparse.Namespace, *, seed: int, run_index: int, output_dir: Path) -> RolloutSummary:
+    log.info("Run %d | seed=%d | env=%s | model=%s", run_index, seed, args.environment, args.model)
+    log.info("Building environment...")
     env = build_env(args, seed)
+    # Patch to stream code execution to terminal
+    _patch_execute_code(env, label="ROOT", color="bold cyan")
+    _patch_actor_rollouts(env)
+
+    log.info("Dataset ready (%d rows). Connecting to %s ...", len(env.dataset), args.base_url)
     client = AsyncOpenAI(
         api_key=os.environ[args.api_key_env_var],
         base_url=args.base_url,
@@ -216,12 +335,16 @@ async def run_once(args: argparse.Namespace, *, seed: int, run_index: int, outpu
     )
     try:
         row = env.dataset[0]
+        log.info("Starting rollout (max_turns=%d) ...", args.max_turns)
         state = await env.rollout(row, client, args.model, {"temperature": args.temperature})
-        await env.rubric.score_rollout(state, NoopAsyncScoreSem())
+        log.info("Rollout complete. Scoring...")
+        await env.rubric.score_rollout(state)
+        log.info("Scoring done.")
+        trace = [item for item in state.get("chatroom_tool_trace", []) if isinstance(item, dict)]
+        print_summary(state)
         info = state.get("info", {})
         if not isinstance(info, dict):
             info = {}
-        trace = [item for item in state.get("chatroom_tool_trace", []) if isinstance(item, dict)]
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         filename = f"{args.environment}_seed{seed}_run{run_index}_{timestamp}.json"
         output_path = output_dir / filename
@@ -245,6 +368,7 @@ async def run_once(args: argparse.Namespace, *, seed: int, run_index: int, outpu
             "completion": state.get("completion"),
         }
         output_path.write_text(json.dumps(payload, indent=2, default=str))
+        log.info("Saved rollout to %s", output_path)
         return RolloutSummary(
             environment=args.environment,
             seed=seed,

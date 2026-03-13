@@ -466,13 +466,14 @@ class DiplomacyRLMEnv(RLMEnv):
                 env_vars["DEFAULT_IDLE_SLEEP_SECONDS"] = str(float(idle_sleep))
         return env_vars
 
-    async def _run_sub_llm(self, client, model, messages):
-        state = self._rollout_state_var.get()
+    async def _run_sub_llm(self, state, client, model, messages):
+        if state is None:
+            state = self._rollout_state_var.get()
         if state is None:
             raise RuntimeError("sub-LLM call is missing rollout state context")
         token = self._sub_tool_state_var.set(state)
         try:
-            return await super()._run_sub_llm(client, model, messages)
+            return await super()._run_sub_llm(state, client, model, messages)
         finally:
             self._sub_tool_state_var.reset(token)
 
