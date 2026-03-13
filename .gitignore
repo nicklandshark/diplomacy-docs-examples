@@ -1,2 +1,7 @@
 __pycache__/
+.pytest_cache/
 .tmp/
+*.pyc
+.DS_Store
+**/__marimo__/session
+.venv
