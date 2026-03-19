@@ -26,6 +26,7 @@ RUNTIME_ENV = {
 
 RUNTIME_SOURCE_DIRS = (
     "environments",
+    "prompts",
     "tinker_training",
 )
 

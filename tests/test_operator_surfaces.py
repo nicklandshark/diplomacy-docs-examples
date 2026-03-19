@@ -23,7 +23,12 @@ def test_marimo_notebook_contains_cli_and_manifest_controls() -> None:
     assert "GRPO (Group Relative Policy Optimization)" in text
     assert "Diplomacy is a multi-agent negotiation game" in text
     assert "`tool_accuracy`" in text
+    assert "`target_execution`" in text
+    assert "`supported_target`" in text
+    assert "`cooperative_press`" in text
     assert "`full_press`" in text
+    assert "default `full_v1` five-stage easy-to-hard progression" in text
+    assert "Prompt family" in text
     assert "**Control guide**" in text
     assert "**Core controls**" in text
     assert "**Stage controls**" in text

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from pathlib import Path
 
 from data_generator import (
@@ -9,6 +10,8 @@ from data_generator import (
     build_target_execution_dataset,
 )
 from scripts.train_tinker_grpo_curriculum import build_config
+from tinker_training.diplomacy_adapter import DiplomacyDatasetBuilder
+from tinker_training.eval_utils import build_actor_runtime, build_runtime_policy
 from tinker_training.prompt_family import (
     DEFAULT_PROMPT_FAMILY_DIR,
     PROMPT_FAMILY_ENVIRONMENTS,
@@ -131,6 +134,28 @@ def test_cooperative_press_dataset_has_one_required_counterpart() -> None:
     assert len(info["relevant_powers"]) == 1
     assert len(info["required_interactions"]) == 2
     assert len(info["relevant_actor_objectives"]) == 1
+
+
+def test_eval_dataset_uses_single_partial_batch_when_eval_set_is_small() -> None:
+    dataset_builder = DiplomacyDatasetBuilder(
+        environment_kind="tool_accuracy",
+        model_name_for_tokenizer="Qwen/Qwen3-30B-A3B-Instruct-2507",
+        renderer_name="qwen3_instruct",
+        actor_runtime=build_actor_runtime(actor_max_turns=6, session_timeout_seconds=90.0),
+        policy_config=build_runtime_policy(max_turns=14),
+        batch_size=16,
+        group_size=4,
+        num_train_examples=64,
+        num_eval_examples=8,
+        train_seed=21,
+        eval_seed=10021,
+    )
+
+    _, eval_dataset = asyncio.run(dataset_builder())
+
+    assert eval_dataset is not None
+    assert len(eval_dataset) == 1
+    assert len(eval_dataset.get_batch(0)) == 8
 
 
 def test_repo_prompt_tree_only_contains_gepa_full_press_family() -> None:

@@ -10,8 +10,6 @@ from typing import Any
 
 from tinker_training.curriculum import (
     DEFAULT_LOG_ROOT,
-    DEFAULT_MODEL_NAME,
-    DEFAULT_OPENROUTER_MODEL,
     DEFAULT_WANDB_PROJECT,
 )
 from tinker_training.prompt_family import DEFAULT_PROMPT_FAMILY_DIR
@@ -44,13 +42,13 @@ def make_default_run_name(model_name: str) -> str:
 
 def notebook_defaults() -> dict[str, Any]:
     return {
-        "curriculum_preset": "legacy_two_stage",
-        "model_name": DEFAULT_MODEL_NAME,
+        "curriculum_preset": "full_v1",
+        "model_name": "Qwen/Qwen3-30B-A3B-Instruct-2507",
         "log_root": DEFAULT_LOG_ROOT,
         "wandb_project": DEFAULT_WANDB_PROJECT,
         "tracked_instruction_block_path": "",
         "prompt_family_dir": str(DEFAULT_PROMPT_FAMILY_DIR),
-        "openrouter_model": DEFAULT_OPENROUTER_MODEL,
+        "openrouter_model": "openai/gpt-5.4-mini",
         "modal_app_name": "diplomacy-grpo-rollouts",
         "modal_timeout_seconds": 900,
         "modal_cpu": 2.0,
@@ -82,7 +80,7 @@ def notebook_defaults() -> dict[str, Any]:
 def build_train_command(
     *,
     script_path: Path,
-    curriculum_preset: str = "legacy_two_stage",
+    curriculum_preset: str = "full_v1",
     model_name: str,
     log_root: str,
     wandb_project: str,

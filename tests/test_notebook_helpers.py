@@ -40,6 +40,7 @@ class _FakePopenFactory:
 def test_build_train_command_and_manifest_path() -> None:
     command = build_train_command(
         script_path=Path("scripts/train_tinker_grpo_curriculum.py"),
+        curriculum_preset="legacy_two_stage",
         model_name="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         log_root="~/runs",
         wandb_project="demo",
@@ -96,6 +97,9 @@ def test_build_train_command_and_manifest_path() -> None:
 def test_notebook_defaults_use_reduced_rollout_counts() -> None:
     defaults = notebook_defaults()
 
+    assert defaults["curriculum_preset"] == "full_v1"
+    assert defaults["model_name"] == "Qwen/Qwen3-30B-A3B-Instruct-2507"
+    assert defaults["openrouter_model"] == "openai/gpt-5.4-mini"
     assert defaults["stage1_train_examples"] == 64
     assert defaults["stage1_eval_examples"] == 8
     assert defaults["stage2_train_examples"] == 48

@@ -88,6 +88,10 @@ def _(defaults, make_default_run_name, mo):
         value="",
         label="Initial checkpoint (optional)",
     )
+    prompt_family_dir = mo.ui.text(
+        value=defaults["prompt_family_dir"],
+        label="Prompt family",
+    )
     manifest_path = mo.ui.text(
         value="",
         label="Manifest path override (optional)",
@@ -221,6 +225,7 @@ def _(defaults, make_default_run_name, mo):
         model_name,
         num_groups_to_log,
         openrouter_model,
+        prompt_family_dir,
         refresh_monitor,
         renderer_name,
         run_name,
@@ -265,6 +270,7 @@ def _(
     model_name,
     num_groups_to_log,
     openrouter_model,
+    prompt_family_dir,
     preflight_env,
     refresh_monitor,
     renderer_name,
@@ -297,6 +303,7 @@ def _(
         model_name=model_name.value,
         log_root=log_root.value,
         wandb_project=wandb_project.value,
+        prompt_family_dir=prompt_family_dir.value,
         openrouter_model=openrouter_model.value,
         modal_app_name=modal_app_name.value,
         modal_timeout_seconds=int(modal_timeout.value),
@@ -373,6 +380,7 @@ def _(
     num_groups_to_log,
     openrouter_model,
     optional_env_lines,
+    prompt_family_dir,
     renderer_name,
     required_env_lines,
     refresh_monitor,
@@ -420,11 +428,13 @@ def _(
 
                 When you click `Launch training`, marimo starts `scripts/train_tinker_grpo_curriculum.py`
                 as a subprocess on the machine hosting this notebook. That trainer then runs one shared
-                curriculum with two stages:
+                curriculum with the default `full_v1` five-stage easy-to-hard progression:
 
                 1. `tool_accuracy`: short-horizon drills for reading, messaging, and legal action tools.
-                2. `full_press`: longer full-press Diplomacy episodes that continue from the same run and
-                   reuse the checkpoint produced by stage 1.
+                2. `target_execution`: no-press target-conversion drills focused on adjudicated success.
+                3. `supported_target`: one-counterpart coordination where the target requires a specific support pattern.
+                4. `cooperative_press`: easier full-press tasks with one cooperative counterpart.
+                5. `full_press`: the hardest unrestricted stage, continuing from the same shared checkpoint.
 
                 This notebook is only the control plane. It launches the trainer, shows the resolved command,
                 and monitors `curriculum_manifest.json`. Rollout episodes still execute on Modal workers.
@@ -433,7 +443,7 @@ def _(
             mo.md("## Controls"),
             mo.hstack([model_name, enable_thinking, renderer_name], wrap=True, justify="start"),
             mo.hstack([run_name, log_root, wandb_project], wrap=True, justify="start"),
-            mo.hstack([initial_checkpoint, manifest_path], wrap=True, justify="start"),
+            mo.hstack([initial_checkpoint, prompt_family_dir, manifest_path], wrap=True, justify="start"),
             mo.hstack([save_every, eval_every, num_groups_to_log, lora_rank], wrap=True, justify="start"),
             mo.md(
                 """
@@ -447,12 +457,17 @@ def _(
                 - `Run name`: output folder and W&B run name.
                 - `Log root`: parent directory for manifests, checkpoints, and logs.
                 - `Initial checkpoint`: warm-start checkpoint if you are not resuming from the existing run folder.
+                - `Prompt family`: the stage-specific tracked-policy prompts used by the default five-stage curriculum.
                 - `Manifest path override`: override the default `curriculum_manifest.json` location if you need to monitor another path.
                 - `Save every` / `Eval every`: cadence in global curriculum batches.
                 - `Rich-log groups per batch`: how many groups get HTML and logtree output.
-                - `LoRA rank`: shared adapter rank for the full curriculum. Stage 1 and stage 2 use the same LoRA rank.
+                - `LoRA rank`: shared adapter rank for the full curriculum.
 
                 **Stage controls**
+
+                The numeric stage controls below are legacy two-stage overrides. The default `full_v1`
+                notebook path uses the built-in five-stage preset and ignores them unless you deliberately
+                launch the legacy curriculum from the command line outside this notebook.
 
                 - `train examples`: number of sampled sessions used for training in that stage.
                 - `eval examples`: number of sampled sessions used for evaluation in that stage.
@@ -463,8 +478,8 @@ def _(
                 - `train seed`: dataset seed.
                 - `learning rate`: stage-specific learning rate.
 
-                The default stage sizes are intentionally conservative to control spend: stage 1 starts at
-                `64/8` train/eval examples and stage 2 starts at `48/8`.
+                The default five-stage preset is intentionally conservative to control spend:
+                `64/8`, `64/8`, `64/8`, `48/8`, `48/8` train/eval examples across the five stages.
 
                 **Modal controls**
 

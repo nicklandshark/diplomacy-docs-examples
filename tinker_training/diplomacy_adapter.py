@@ -1377,7 +1377,9 @@ class DiplomacyDatasetBuilder(RLDatasetBuilder):
                     )
                     for row in eval_rows
                 ],
-                batch_size=self.batch_size,
+                # Eval sets are intentionally small in the operator defaults.
+                # Use one full eval batch instead of floor-dividing them away.
+                batch_size=min(self.batch_size, len(eval_rows)),
             )
             if eval_rows
             else None
