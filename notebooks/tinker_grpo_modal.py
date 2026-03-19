@@ -59,6 +59,7 @@ def _():
 
 @app.cell
 def _(defaults, make_default_run_name, mo):
+    tracked_instruction_block_path = defaults.get("tracked_instruction_block_path", "")
     model_name = mo.ui.text(
         value=defaults["model_name"],
         label="Model to train",
@@ -240,6 +241,7 @@ def _(defaults, make_default_run_name, mo):
         stage2_max_turns,
         stage2_train_examples,
         stage2_train_seed,
+        tracked_instruction_block_path,
         wandb_project,
     )
 
@@ -287,6 +289,7 @@ def _(
     stage2_max_turns,
     stage2_train_examples,
     stage2_train_seed,
+    tracked_instruction_block_path,
     wandb_project,
 ):
     command_args = build_train_command(
@@ -323,6 +326,7 @@ def _(
         renderer_name=renderer_name.value,
         run_name=run_name.value,
         initial_checkpoint_path=initial_checkpoint.value,
+        tracked_instruction_block_path=tracked_instruction_block_path,
     )
     command = shlex.join(command_args)
     manifest_target = str(

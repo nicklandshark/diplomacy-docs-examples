@@ -46,6 +46,7 @@ def notebook_defaults() -> dict[str, Any]:
         "model_name": DEFAULT_MODEL_NAME,
         "log_root": DEFAULT_LOG_ROOT,
         "wandb_project": DEFAULT_WANDB_PROJECT,
+        "tracked_instruction_block_path": "",
         "openrouter_model": DEFAULT_OPENROUTER_MODEL,
         "modal_app_name": "diplomacy-grpo-rollouts",
         "modal_timeout_seconds": 900,
@@ -109,6 +110,7 @@ def build_train_command(
     renderer_name: str | None = None,
     run_name: str | None = None,
     initial_checkpoint_path: str | None = None,
+    tracked_instruction_block_path: str | None = None,
     python_executable: str | None = None,
 ) -> list[str]:
     command = [
@@ -181,6 +183,8 @@ def build_train_command(
         command.extend(["--run-name", run_name.strip()])
     if initial_checkpoint_path and initial_checkpoint_path.strip():
         command.extend(["--initial-checkpoint-path", initial_checkpoint_path.strip()])
+    if tracked_instruction_block_path and tracked_instruction_block_path.strip():
+        command.extend(["--tracked-instruction-block-path", tracked_instruction_block_path.strip()])
     return command
 
 

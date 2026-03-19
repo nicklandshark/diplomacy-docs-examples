@@ -71,6 +71,7 @@ def test_build_train_command_and_manifest_path() -> None:
         renderer_name="qwen3_disable_thinking",
         run_name="demo-run",
         initial_checkpoint_path="checkpoint://start",
+        tracked_instruction_block_path="prompts/locked.txt",
     )
 
     assert command[:4] == [
@@ -82,6 +83,7 @@ def test_build_train_command_and_manifest_path() -> None:
     assert "--renderer-name" in command
     assert "--run-name" in command
     assert "--initial-checkpoint-path" in command
+    assert "--tracked-instruction-block-path" in command
     assert resolve_manifest_path(log_root="~/runs", run_name="demo-run", manifest_override=None).as_posix().endswith(
         "demo-run/curriculum_manifest.json"
     )
@@ -94,6 +96,7 @@ def test_notebook_defaults_use_reduced_rollout_counts() -> None:
     assert defaults["stage1_eval_examples"] == 8
     assert defaults["stage2_train_examples"] == 48
     assert defaults["stage2_eval_examples"] == 8
+    assert defaults["tracked_instruction_block_path"] == ""
 
 
 def test_launch_once_is_idempotent_per_button_event(tmp_path) -> None:
