@@ -16,6 +16,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from openai import OpenAI
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VENDORED_COOKBOOK_ROOT = REPO_ROOT / "vendor" / "tinker-cookbook"
 if str(REPO_ROOT) not in sys.path:
@@ -69,6 +71,7 @@ DEFAULT_ENVIRONMENT = "full_press"
 DEFAULT_RUN_DIR = REPO_ROOT / ".tmp" / "gepa_long_run"
 DEFAULT_APP_NAME = "diplomacy-gepa-long-run"
 DEFAULT_LOG_ROOT = "~/tinker-runs/diplomacy-grpo"
+DEFAULT_TEMPERATURE = 1.0
 TOOL_PATTERN = re.compile(r"<function=([^>]+)>")
 
 
@@ -90,7 +93,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--preset-b-path", default=None)
     parser.add_argument("--renderer-name", default=None)
     parser.add_argument("--disable-thinking", action="store_true")
-    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
     parser.add_argument("--temperatures", default=None)
     parser.add_argument("--max-turns", type=int, default=10)
     parser.add_argument("--max-turns-options", default=None)
@@ -208,6 +211,75 @@ def prompt_fingerprint(prompt: str | None) -> str:
         return "baseline"
     digest = hashlib.sha1(prompt.encode("utf-8")).hexdigest()
     return digest[:8]
+
+
+def helper_api_key_from_env(env_var: str) -> str:
+    api_key = os.environ.get(env_var)
+    if api_key:
+        return api_key
+    raise RuntimeError(f"{env_var} must be set.")
+
+
+def build_openai_compatible_lm(
+    *,
+    model_name: str,
+    base_url: str,
+    api_key_env_var: str,
+    http_referer: str,
+    x_title: str,
+):
+    client = OpenAI(
+        api_key=helper_api_key_from_env(api_key_env_var),
+        base_url=base_url,
+        default_headers={
+            "HTTP-Referer": http_referer,
+            "X-Title": x_title,
+        },
+    )
+
+    def _lm(prompt: str | list[dict[str, Any]]) -> str:
+        if isinstance(prompt, str):
+            messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+        else:
+            messages = prompt
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+        )
+        message = completion.choices[0].message
+        content = message.content
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            text_chunks: list[str] = []
+            for block in content:
+                if hasattr(block, "text") and getattr(block, "text"):
+                    text_chunks.append(str(block.text))
+                elif isinstance(block, dict) and block.get("text"):
+                    text_chunks.append(str(block["text"]))
+            return "".join(text_chunks)
+        return str(content or "")
+
+    return _lm
+
+
+def resolve_reflection_lm(
+    *,
+    reflection_lm: Any,
+    helper_base_url: str,
+    helper_api_key_env_var: str,
+    helper_http_referer: str,
+    helper_x_title: str,
+) -> Any:
+    if not isinstance(reflection_lm, str):
+        return reflection_lm
+    return build_openai_compatible_lm(
+        model_name=reflection_lm,
+        base_url=helper_base_url,
+        api_key_env_var=helper_api_key_env_var,
+        http_referer=helper_http_referer,
+        x_title=helper_x_title,
+    )
 
 
 def screen_preset_slug(preset: ExperimentPreset) -> str:
@@ -880,6 +952,13 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
         per_seed_timeout_seconds=args.per_seed_timeout_seconds,
     )
     try:
+        reflection_lm = resolve_reflection_lm(
+            reflection_lm=args.reflection_lm,
+            helper_base_url=preset.helper_base_url,
+            helper_api_key_env_var=preset.helper_api_key_env_var,
+            helper_http_referer=preset.helper_http_referer,
+            helper_x_title=preset.helper_x_title,
+        )
         background = review_background_from_taxonomy(
             baseline_taxonomy=baseline_taxonomy,
             extra_lines=[
@@ -912,7 +991,7 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
                     capture_stdio=False,
                 ),
                 reflection=ReflectionConfig(
-                    reflection_lm=args.reflection_lm,
+                    reflection_lm=reflection_lm,
                     reflection_minibatch_size=args.reflection_minibatch_size,
                 ),
             ),
@@ -1013,6 +1092,10 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
             ),
             "decision": decision,
             "reflection_lm": args.reflection_lm,
+            "reflection_transport": {
+                "helper_base_url": preset.helper_base_url,
+                "helper_api_key_env_var": preset.helper_api_key_env_var,
+            },
             "max_metric_calls": args.max_metric_calls,
         },
     )
