@@ -28,6 +28,15 @@ from tinker_training.curriculum import (
     run_curriculum,
 )
 from tinker_training.diplomacy_adapter import get_default_renderer_name
+from tinker_training.hybrid_schedule import (
+    HYBRID_BATCH_SIZE,
+    HYBRID_EVAL_EXAMPLES_PER_ENVIRONMENT,
+    HYBRID_EVAL_SEED_BASE,
+    HYBRID_GROUP_SIZE,
+    HYBRID_MAX_TOKENS,
+    HYBRID_TOTAL_BATCHES_DEFAULT,
+    HYBRID_TRAIN_SEED,
+)
 from tinker_training.prompt_family import DEFAULT_PROMPT_FAMILY_DIR, load_prompt_family_blocks
 
 logging.basicConfig(
@@ -37,91 +46,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-CURRICULUM_PRESETS = ("legacy_two_stage", "full_v1")
-FULL_V1_STAGE_DEFAULTS: tuple[dict[str, Any], ...] = (
-    {
-        "name": "stage1_tool_accuracy",
-        "environment_kind": "tool_accuracy",
-        "num_train_examples": 64,
-        "num_eval_examples": 8,
-        "batch_size": 16,
-        "group_size": 4,
-        "max_tokens": 256,
-        "max_turns": 14,
-        "max_trajectory_tokens": 8192,
-        "train_seed": 21,
-        "eval_seed": 10_021,
-    },
-    {
-        "name": "stage2_target_execution",
-        "environment_kind": "target_execution",
-        "num_train_examples": 64,
-        "num_eval_examples": 8,
-        "batch_size": 16,
-        "group_size": 4,
-        "max_tokens": 320,
-        "max_turns": 12,
-        "max_trajectory_tokens": 8192,
-        "train_seed": 37,
-        "eval_seed": 10_037,
-    },
-    {
-        "name": "stage3_supported_target",
-        "environment_kind": "supported_target",
-        "num_train_examples": 64,
-        "num_eval_examples": 8,
-        "batch_size": 16,
-        "group_size": 4,
-        "max_tokens": 320,
-        "max_turns": 14,
-        "max_trajectory_tokens": 8192,
-        "train_seed": 53,
-        "eval_seed": 10_053,
-    },
-    {
-        "name": "stage4_cooperative_press",
-        "environment_kind": "cooperative_press",
-        "num_train_examples": 48,
-        "num_eval_examples": 8,
-        "batch_size": 12,
-        "group_size": 4,
-        "max_tokens": 384,
-        "max_turns": 16,
-        "max_trajectory_tokens": 12_288,
-        "train_seed": 69,
-        "eval_seed": 10_069,
-    },
-    {
-        "name": "stage5_full_press",
-        "environment_kind": "full_press",
-        "num_train_examples": 48,
-        "num_eval_examples": 8,
-        "batch_size": 12,
-        "group_size": 4,
-        "max_tokens": 384,
-        "max_turns": 20,
-        "max_trajectory_tokens": 12_288,
-        "train_seed": 85,
-        "eval_seed": 10_085,
-    },
-)
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Train a Tinker GRPO curriculum for Diplomacy with Modal-isolated rollouts.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--curriculum-preset",
-        choices=CURRICULUM_PRESETS,
-        default="legacy_two_stage",
-        help="Which curriculum preset to run.",
-    )
-    parser.add_argument(
         "--prompt-family-dir",
         default=str(DEFAULT_PROMPT_FAMILY_DIR),
-        help="Directory containing the stage-specific tracked-policy prompts for `full_v1`.",
+        help="Directory containing the stage-specific tracked-policy prompts for the hybrid curriculum.",
     )
     parser.add_argument(
         "--model-name",
@@ -159,21 +92,22 @@ def parse_args() -> argparse.Namespace:
         help="Optional checkpoint to warm-start from when no local curriculum state exists yet.",
     )
     parser.add_argument(
-        "--tracked-instruction-block-path",
-        default=None,
-        help="Optional path to a tracked-policy instruction block override used as the global fallback prompt.",
+        "--hybrid-total-batches",
+        type=int,
+        default=HYBRID_TOTAL_BATCHES_DEFAULT,
+        help="Total number of hybrid curriculum batches to train.",
     )
     parser.add_argument(
         "--learning-rate",
         type=float,
         default=2e-5,
-        help="Global learning rate used by the `full_v1` curriculum preset.",
+        help="Global learning rate used by the hybrid curriculum.",
     )
     parser.add_argument(
         "--lora-rank",
         type=int,
         default=32,
-        help="Global LoRA rank used by the `full_v1` curriculum preset.",
+        help="Global LoRA rank used by the hybrid curriculum.",
     )
 
     parser.add_argument("--modal-app-name", default="diplomacy-grpo-rollouts", help="Modal app name used for remote rollout workers.")
@@ -206,94 +140,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-every", type=int, default=5, help="Run evaluation every N global batches.")
     parser.add_argument("--num-groups-to-log", type=int, default=2, help="How many rollout groups per batch get rich HTML/logtree output.")
     parser.add_argument("--disable-rollout-json-export", action="store_true", help="Disable JSONL rollout summary export.")
-
-    parser.add_argument("--stage1-train-examples", type=int, default=64, help="Number of training sessions sampled for stage 1 (`tool_accuracy`).")
-    parser.add_argument("--stage1-eval-examples", type=int, default=8, help="Number of evaluation sessions sampled for stage 1.")
-    parser.add_argument("--stage1-batch-size", type=int, default=16, help="Number of prompt groups per optimizer batch in stage 1.")
-    parser.add_argument("--stage1-group-size", type=int, default=4, help="Number of trajectories sampled per prompt group in stage 1.")
-    parser.add_argument("--stage1-max-tokens", type=int, default=256, help="Maximum model output tokens per trajectory for stage 1.")
-    parser.add_argument("--stage1-max-turns", type=int, default=14, help="Maximum environment turns per trajectory for stage 1.")
-    parser.add_argument("--stage1-max-trajectory-tokens", type=int, default=8192, help="Hard cap on full trajectory token budget for stage 1.")
-    parser.add_argument("--stage1-train-seed", type=int, default=21, help="Training dataset seed for stage 1.")
-    parser.add_argument("--stage1-eval-seed", type=int, default=10_021, help="Evaluation dataset seed for stage 1.")
-    parser.add_argument("--stage1-learning-rate", type=float, default=3e-5, help="Learning rate used while stage 1 is active.")
-    parser.add_argument("--stage1-lora-rank", type=int, default=32, help="LoRA rank. Must match stage 2 because the curriculum now uses one Tinker run.")
-
-    parser.add_argument("--stage2-train-examples", type=int, default=48, help="Number of training sessions sampled for stage 2 (`full_press`).")
-    parser.add_argument("--stage2-eval-examples", type=int, default=8, help="Number of evaluation sessions sampled for stage 2.")
-    parser.add_argument("--stage2-batch-size", type=int, default=12, help="Number of prompt groups per optimizer batch in stage 2.")
-    parser.add_argument("--stage2-group-size", type=int, default=4, help="Number of trajectories sampled per prompt group in stage 2.")
-    parser.add_argument("--stage2-max-tokens", type=int, default=384, help="Maximum model output tokens per trajectory for stage 2.")
-    parser.add_argument("--stage2-max-turns", type=int, default=20, help="Maximum environment turns per trajectory for stage 2.")
-    parser.add_argument("--stage2-max-trajectory-tokens", type=int, default=12288, help="Hard cap on full trajectory token budget for stage 2.")
-    parser.add_argument("--stage2-train-seed", type=int, default=37, help="Training dataset seed for stage 2.")
-    parser.add_argument("--stage2-eval-seed", type=int, default=10_037, help="Evaluation dataset seed for stage 2.")
-    parser.add_argument("--stage2-learning-rate", type=float, default=2e-5, help="Learning rate used while stage 2 is active.")
-    parser.add_argument("--stage2-lora-rank", type=int, default=32, help="LoRA rank. Must match stage 1 because the curriculum now uses one Tinker run.")
     return parser.parse_args()
 
 
 def build_stages(args: argparse.Namespace) -> tuple[StageSpec, ...]:
-    curriculum_preset = getattr(args, "curriculum_preset", "legacy_two_stage")
-    prompt_family_dir = getattr(args, "prompt_family_dir", str(DEFAULT_PROMPT_FAMILY_DIR))
-    learning_rate = getattr(args, "learning_rate", 2e-5)
-    lora_rank = getattr(args, "lora_rank", 32)
-    if curriculum_preset == "full_v1":
-        prompt_blocks = load_prompt_family_blocks(prompt_family_dir)
-        return build_full_v1_stage_specs(
-            prompt_blocks=prompt_blocks,
-            learning_rate=learning_rate,
-            lora_rank=lora_rank,
-        )
-
     return (
         StageSpec(
-            name="stage1_tool_accuracy",
-            environment_kind="tool_accuracy",
-            num_train_examples=args.stage1_train_examples,
-            num_eval_examples=args.stage1_eval_examples,
-            batch_size=args.stage1_batch_size,
-            group_size=args.stage1_group_size,
-            max_tokens=args.stage1_max_tokens,
-            max_turns=args.stage1_max_turns,
-            max_trajectory_tokens=args.stage1_max_trajectory_tokens,
-            train_seed=args.stage1_train_seed,
-            eval_seed=args.stage1_eval_seed,
-            learning_rate=args.stage1_learning_rate,
-            lora_rank=args.stage1_lora_rank,
+            name="hybrid_v1",
+            environment_kind="hybrid",
+            num_train_examples=max(1, int(args.hybrid_total_batches)) * HYBRID_BATCH_SIZE,
+            num_eval_examples=HYBRID_EVAL_EXAMPLES_PER_ENVIRONMENT,
+            batch_size=HYBRID_BATCH_SIZE,
+            group_size=HYBRID_GROUP_SIZE,
+            max_tokens=HYBRID_MAX_TOKENS,
+            max_turns=20,
+            max_trajectory_tokens=12_288,
+            train_seed=HYBRID_TRAIN_SEED,
+            eval_seed=HYBRID_EVAL_SEED_BASE,
+            learning_rate=args.learning_rate,
+            lora_rank=args.lora_rank,
         ),
-        StageSpec(
-            name="stage2_full_press",
-            environment_kind="full_press",
-            num_train_examples=args.stage2_train_examples,
-            num_eval_examples=args.stage2_eval_examples,
-            batch_size=args.stage2_batch_size,
-            group_size=args.stage2_group_size,
-            max_tokens=args.stage2_max_tokens,
-            max_turns=args.stage2_max_turns,
-            max_trajectory_tokens=args.stage2_max_trajectory_tokens,
-            train_seed=args.stage2_train_seed,
-            eval_seed=args.stage2_eval_seed,
-            learning_rate=args.stage2_learning_rate,
-            lora_rank=args.stage2_lora_rank,
-        ),
-    )
-
-
-def build_full_v1_stage_specs(
-    *,
-    prompt_blocks: dict[str, str],
-    learning_rate: float,
-    lora_rank: int,
-) -> tuple[StageSpec, ...]:
-    return tuple(
-        StageSpec(
-            learning_rate=learning_rate,
-            lora_rank=lora_rank,
-            tracked_instruction_block=prompt_blocks[stage_defaults["environment_kind"]],
-            **stage_defaults,
-        )
-        for stage_defaults in FULL_V1_STAGE_DEFAULTS
     )
 
 
@@ -302,9 +168,7 @@ def build_config(args: argparse.Namespace) -> CurriculumConfig:
         args.model_name,
         disable_thinking=not args.enable_thinking,
     )
-    tracked_instruction_block = None
-    if args.tracked_instruction_block_path:
-        tracked_instruction_block = Path(args.tracked_instruction_block_path).read_text().strip()
+    prompt_blocks = load_prompt_family_blocks(args.prompt_family_dir)
     return CurriculumConfig(
         model_name=args.model_name,
         renderer_name=renderer_name,
@@ -325,6 +189,8 @@ def build_config(args: argparse.Namespace) -> CurriculumConfig:
         num_groups_to_log=args.num_groups_to_log,
         rollout_json_export=not args.disable_rollout_json_export,
         stages=build_stages(args),
+        prompt_blocks=prompt_blocks,
+        hybrid_total_batches=max(1, int(args.hybrid_total_batches)),
         modal_rollout=ModalRolloutConfig(
             app_name=args.modal_app_name,
             timeout_seconds=args.modal_timeout_seconds,
@@ -332,7 +198,6 @@ def build_config(args: argparse.Namespace) -> CurriculumConfig:
             memory_mb=args.modal_memory_mb,
         ),
         initial_checkpoint_path=args.initial_checkpoint_path,
-        tracked_instruction_block=tracked_instruction_block,
     )
 
 

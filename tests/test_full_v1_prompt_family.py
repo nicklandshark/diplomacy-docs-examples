@@ -10,7 +10,7 @@ from data_generator import (
     build_target_execution_dataset,
 )
 from scripts.train_tinker_grpo_curriculum import build_config
-from tinker_training.diplomacy_adapter import DiplomacyDatasetBuilder
+from tinker_training.diplomacy_adapter import DiplomacyDatasetBuilder, HybridDiplomacyDatasetBuilder
 from tinker_training.eval_utils import build_actor_runtime, build_runtime_policy
 from tinker_training.prompt_family import (
     DEFAULT_PROMPT_FAMILY_DIR,
@@ -30,7 +30,7 @@ def test_load_prompt_family_blocks_reads_all_stage_prompts() -> None:
     assert "No press is required in this environment." in blocks["target_execution"]
 
 
-def test_build_config_supports_full_v1_stage_specific_prompts(tmp_path: Path) -> None:
+def test_build_config_supports_hybrid_prompt_family(tmp_path: Path) -> None:
     prompt_family_dir = tmp_path / "prompt-family"
     prompt_family_dir.mkdir()
     for environment_kind in PROMPT_FAMILY_ENVIRONMENTS:
@@ -39,16 +39,15 @@ def test_build_config_supports_full_v1_stage_specific_prompts(tmp_path: Path) ->
         )
 
     args = argparse.Namespace(
-        curriculum_preset="full_v1",
         prompt_family_dir=str(prompt_family_dir),
         model_name="Qwen/Qwen3-30B-A3B-Instruct-2507",
         renderer_name="qwen3_instruct",
         enable_thinking=False,
         log_root="~/tinker-runs/diplomacy-grpo",
-        run_name="full-v1-test",
+        run_name="hybrid-v1-test",
         wandb_project="diplomacy-grpo",
         initial_checkpoint_path=None,
-        tracked_instruction_block_path=None,
+        hybrid_total_batches=20,
         learning_rate=2e-5,
         lora_rank=32,
         modal_app_name="rollout-app",
@@ -68,42 +67,16 @@ def test_build_config_supports_full_v1_stage_specific_prompts(tmp_path: Path) ->
         eval_every=5,
         num_groups_to_log=2,
         disable_rollout_json_export=False,
-        stage1_train_examples=64,
-        stage1_eval_examples=8,
-        stage1_batch_size=16,
-        stage1_group_size=4,
-        stage1_max_tokens=256,
-        stage1_max_turns=14,
-        stage1_max_trajectory_tokens=8192,
-        stage1_train_seed=21,
-        stage1_eval_seed=10021,
-        stage1_learning_rate=3e-5,
-        stage1_lora_rank=32,
-        stage2_train_examples=48,
-        stage2_eval_examples=8,
-        stage2_batch_size=12,
-        stage2_group_size=4,
-        stage2_max_tokens=384,
-        stage2_max_turns=20,
-        stage2_max_trajectory_tokens=12288,
-        stage2_train_seed=37,
-        stage2_eval_seed=10037,
-        stage2_learning_rate=2e-5,
-        stage2_lora_rank=32,
     )
 
     config = build_config(args)
 
-    assert [stage.name for stage in config.stages] == [
-        "stage1_tool_accuracy",
-        "stage2_target_execution",
-        "stage3_supported_target",
-        "stage4_cooperative_press",
-        "stage5_full_press",
-    ]
-    assert all(stage.learning_rate == 2e-5 for stage in config.stages)
-    assert config.stages[0].tracked_instruction_block == "tool_accuracy prompt"
-    assert config.stages[-1].tracked_instruction_block == "full_press prompt"
+    assert [stage.name for stage in config.stages] == ["hybrid_v1"]
+    assert config.stages[0].learning_rate == 2e-5
+    assert config.prompt_blocks == {
+        environment_kind: f"{environment_kind} prompt"
+        for environment_kind in PROMPT_FAMILY_ENVIRONMENTS
+    }
 
 
 def test_target_execution_dataset_has_no_required_interactions() -> None:
@@ -156,6 +129,44 @@ def test_eval_dataset_uses_single_partial_batch_when_eval_set_is_small() -> None
     assert eval_dataset is not None
     assert len(eval_dataset) == 1
     assert len(eval_dataset.get_batch(0)) == 8
+
+
+def test_hybrid_dataset_builder_creates_mixed_train_batches_and_named_evaluators() -> None:
+    prompt_blocks = {
+        environment_kind: f"{environment_kind} prompt"
+        for environment_kind in PROMPT_FAMILY_ENVIRONMENTS
+    }
+    dataset_builder = HybridDiplomacyDatasetBuilder(
+        model_name_for_tokenizer="Qwen/Qwen3-30B-A3B-Instruct-2507",
+        renderer_name="qwen3_instruct",
+        actor_runtime=build_actor_runtime(actor_max_turns=6, session_timeout_seconds=90.0),
+        prompt_blocks=prompt_blocks,
+        batch_size=4,
+        group_size=2,
+        total_batches=6,
+        train_seed=21,
+        eval_seed_base=10021,
+        num_eval_examples_per_environment=2,
+    )
+
+    train_dataset, maybe_eval_dataset = asyncio.run(dataset_builder())
+
+    assert maybe_eval_dataset is None
+    assert len(train_dataset) == 6
+    first_batch = train_dataset.get_batch(0)
+    assert len(first_batch) == 4
+    assert all(builder.environment_kind == "tool_accuracy" for builder in first_batch)
+    named_evaluators = dataset_builder.build_named_evaluators(max_tokens=64)
+    assert [evaluator.name for evaluator in named_evaluators] == [
+        "test/tool_accuracy",
+        "test/target_execution",
+        "test/supported_target",
+        "test/cooperative_press",
+        "test/full_press",
+    ]
+    metrics = dataset_builder.metrics_for_step(0)
+    assert metrics["mix/train_batch_fraction/tool_accuracy"] == 1.0
+    assert metrics["mix/current_phase_index"] == 1.0
 
 
 def test_repo_prompt_tree_only_contains_gepa_full_press_family() -> None:

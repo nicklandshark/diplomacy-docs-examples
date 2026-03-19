@@ -22,7 +22,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from tinker_cookbook import tokenizer_utils
 
-from scripts.train_tinker_grpo_curriculum import build_full_v1_stage_specs
 from tinker_training.curriculum import (
     CurriculumConfig,
     DEFAULT_OPENROUTER_API_KEY_ENV_VAR,
@@ -49,6 +48,15 @@ from tinker_training.eval_utils import (
 )
 from tinker_training.prompt_family import DEFAULT_PROMPT_FAMILY_DIR, load_prompt_family_blocks
 from tinker_training.rollout_backends import ModalTrajectorySandboxRunner, TrajectoryRolloutRequest
+from tinker_training.hybrid_schedule import (
+    HYBRID_BATCH_SIZE,
+    HYBRID_EVAL_EXAMPLES_PER_ENVIRONMENT,
+    HYBRID_EVAL_SEED_BASE,
+    HYBRID_GROUP_SIZE,
+    HYBRID_MAX_TOKENS,
+    HYBRID_TOTAL_BATCHES_DEFAULT,
+    HYBRID_TRAIN_SEED,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -268,6 +276,58 @@ def _smoke_stage(stage: StageSpec) -> StageSpec:
     )
 
 
+def _isolated_stage_specs(
+    *,
+    prompt_blocks: dict[str, str],
+    learning_rate: float,
+    lora_rank: int,
+) -> tuple[StageSpec, ...]:
+    stage_specs: list[StageSpec] = []
+    for index, environment_kind in enumerate(ENVIRONMENTS):
+        stage_specs.append(
+            StageSpec(
+                name=f"{environment_kind}_smoke",
+                environment_kind=environment_kind,
+                num_train_examples=HYBRID_BATCH_SIZE * 10,
+                num_eval_examples=2,
+                batch_size=HYBRID_BATCH_SIZE,
+                group_size=1,
+                max_tokens=HYBRID_MAX_TOKENS,
+                max_turns=MAX_TURNS[environment_kind],
+                max_trajectory_tokens=12_288,
+                train_seed=HYBRID_TRAIN_SEED + index,
+                eval_seed=HYBRID_EVAL_SEED_BASE + index,
+                learning_rate=learning_rate,
+                lora_rank=lora_rank,
+                tracked_instruction_block=prompt_blocks[environment_kind],
+            )
+        )
+    return tuple(stage_specs)
+
+
+def _hybrid_stage_spec(
+    *,
+    learning_rate: float,
+    lora_rank: int,
+    total_batches: int,
+) -> StageSpec:
+    return StageSpec(
+        name="hybrid_v1",
+        environment_kind="hybrid",
+        num_train_examples=max(1, total_batches) * HYBRID_BATCH_SIZE,
+        num_eval_examples=HYBRID_EVAL_EXAMPLES_PER_ENVIRONMENT,
+        batch_size=HYBRID_BATCH_SIZE,
+        group_size=HYBRID_GROUP_SIZE,
+        max_tokens=HYBRID_MAX_TOKENS,
+        max_turns=20,
+        max_trajectory_tokens=12_288,
+        train_seed=HYBRID_TRAIN_SEED,
+        eval_seed=HYBRID_EVAL_SEED_BASE,
+        learning_rate=learning_rate,
+        lora_rank=lora_rank,
+    )
+
+
 def _build_curriculum_config(
     *,
     args: argparse.Namespace,
@@ -300,6 +360,8 @@ def _build_curriculum_config(
         num_groups_to_log=1,
         rollout_json_export=True,
         stages=stages,
+        prompt_blocks=prompt_blocks,
+        hybrid_total_batches=max(1, int(args.hybrid_total_batches)),
         modal_rollout=ModalRolloutConfig(
             app_name=args.modal_app_name,
             timeout_seconds=args.modal_timeout_seconds,
@@ -307,7 +369,6 @@ def _build_curriculum_config(
             memory_mb=args.modal_memory_mb,
         ),
         initial_checkpoint_path=initial_checkpoint_path,
-        tracked_instruction_block=prompt_blocks["full_press"],
     )
 
 
@@ -354,7 +415,7 @@ async def run_isolated_smokes(
     initial_checkpoint_path: str | None,
     label: str,
 ) -> dict[str, Any]:
-    stage_specs = tuple(_smoke_stage(stage) for stage in build_full_v1_stage_specs(
+    stage_specs = tuple(_smoke_stage(stage) for stage in _isolated_stage_specs(
         prompt_blocks=prompt_blocks,
         learning_rate=args.learning_rate,
         lora_rank=args.lora_rank,
@@ -388,19 +449,18 @@ async def run_curriculum_smoke(
     initial_checkpoint_path: str | None,
     label: str,
 ) -> dict[str, Any]:
-    stage_specs = tuple(
-        _smoke_stage(stage)
-        for stage in build_full_v1_stage_specs(
-            prompt_blocks=prompt_blocks,
+    stage_specs = (
+        _hybrid_stage_spec(
             learning_rate=args.learning_rate,
             lora_rank=args.lora_rank,
-        )
+            total_batches=max(1, args.hybrid_total_batches),
+        ),
     )
     config = _build_curriculum_config(
         args=args,
         prompt_blocks=prompt_blocks,
         stages=stage_specs,
-        run_name=f"{label}-full-v1",
+        run_name=f"{label}-hybrid-v1",
         initial_checkpoint_path=initial_checkpoint_path,
     )
     manifest_path = await run_curriculum(config)
@@ -514,28 +574,28 @@ def final_recommendation(
     sft_curriculum: dict[str, Any] | None,
 ) -> dict[str, Any]:
     recommendation = {
-        "recommended_default": "legacy_two_stage",
-        "reason": "The new full_v1 stack has not been benchmarked yet.",
+        "recommended_default": "hybrid_v1",
+        "reason": "The hybrid-only stack is the only supported training path; benchmark results are not available yet.",
     }
     if not base_curriculum or not sft_curriculum:
         return recommendation
-    base_stage5 = base_curriculum.get("per_stage", {}).get("stage5_full_press", {})
-    sft_stage5 = sft_curriculum.get("per_stage", {}).get("stage5_full_press", {})
-    base_metrics = base_stage5.get("last_metrics", {}).get("metrics", base_stage5.get("last_metrics", {}))
-    sft_metrics = sft_stage5.get("last_metrics", {}).get("metrics", sft_stage5.get("last_metrics", {}))
+    base_stage = base_curriculum.get("per_stage", {}).get("hybrid_v1", {})
+    sft_stage = sft_curriculum.get("per_stage", {}).get("hybrid_v1", {})
+    base_metrics = base_stage.get("last_metrics", {}).get("metrics", base_stage.get("last_metrics", {}))
+    sft_metrics = sft_stage.get("last_metrics", {}).get("metrics", sft_stage.get("last_metrics", {}))
     base_gate = float(base_metrics.get("rubric/full_press_gate_metric", 0.0))
     sft_gate = float(sft_metrics.get("rubric/full_press_gate_metric", 0.0))
     if sft_gate >= base_gate:
         recommendation = {
-            "recommended_default": "full_v1",
-            "reason": "SFT+RL matched or beat the base RL curriculum on the stage-5 full-press gate metric.",
+            "recommended_default": "hybrid_v1",
+            "reason": "SFT+RL matched or beat the base hybrid curriculum on the full-press gate metric.",
             "stage5_gate_base_plus_rl": base_gate,
             "stage5_gate_sft_plus_rl": sft_gate,
         }
     else:
         recommendation = {
-            "recommended_default": "legacy_two_stage",
-            "reason": "SFT+RL did not beat the base RL curriculum on the stage-5 full-press gate metric.",
+            "recommended_default": "hybrid_v1",
+            "reason": "SFT+RL did not beat the base hybrid curriculum on the full-press gate metric.",
             "stage5_gate_base_plus_rl": base_gate,
             "stage5_gate_sft_plus_rl": sft_gate,
         }

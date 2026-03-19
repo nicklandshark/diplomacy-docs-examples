@@ -26,9 +26,22 @@ import tinker
 from tinker_training.diplomacy_adapter import (
     ActorRuntimeConfig,
     DiplomacyDatasetBuilder,
+    HybridDiplomacyDatasetBuilder,
     OpenRouterHeaders,
     RuntimePolicyConfig,
     build_actor_configs,
+)
+from tinker_training.hybrid_schedule import (
+    HYBRID_BATCH_SIZE,
+    HYBRID_EVAL_EXAMPLES_PER_ENVIRONMENT,
+    HYBRID_GROUP_SIZE,
+    HYBRID_MAX_TOKENS,
+    HYBRID_PHASE_SCHEDULE,
+    HYBRID_TOTAL_BATCHES_DEFAULT,
+    HYBRID_TRAIN_SEED,
+    HYBRID_EVAL_SEED_BASE,
+    phase_for_batch,
+    phase_schedule_payload,
 )
 from tinker_training.rollout_backends import (
     ModalTrajectorySandboxRunner,
@@ -56,6 +69,7 @@ class StageSpec:
         "supported_target",
         "cooperative_press",
         "full_press",
+        "hybrid",
     ]
     num_train_examples: int
     num_eval_examples: int
@@ -102,6 +116,9 @@ class CurriculumConfig:
     num_groups_to_log: int
     rollout_json_export: bool
     stages: tuple[StageSpec, ...]
+    prompt_blocks: dict[str, str] | None = None
+    hybrid_total_batches: int = HYBRID_TOTAL_BATCHES_DEFAULT
+    hybrid_eval_examples_per_environment: int = HYBRID_EVAL_EXAMPLES_PER_ENVIRONMENT
     modal_rollout: ModalRolloutConfig = field(default_factory=ModalRolloutConfig)
     run_name: str | None = None
     initial_checkpoint_path: str | None = None
@@ -147,17 +164,34 @@ class OffsetRLDataset(RLDataset):
 
 
 class StageMetricsLogger(ml_log.Logger):
-    def __init__(self, *, root_logger: ml_log.Logger, stage_log_dir: Path, stage_config: Any) -> None:
+    def __init__(
+        self,
+        *,
+        root_logger: ml_log.Logger,
+        stage_log_dir: Path,
+        stage_config: Any,
+        dynamic_metrics_provider: Any = None,
+        on_log_metrics: Any = None,
+    ) -> None:
         self.root_logger = root_logger
         self.stage_logger = ml_log.JsonLogger(stage_log_dir)
+        self.dynamic_metrics_provider = dynamic_metrics_provider
+        self.on_log_metrics = on_log_metrics
         self.stage_logger.log_hparams(_serialize_stage_config(stage_config))
 
     def log_hparams(self, config: Any) -> None:
         self.stage_logger.log_hparams(config)
 
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
-        self.root_logger.log_metrics(metrics, step=step)
-        self.stage_logger.log_metrics(metrics, step=step)
+        combined_metrics = dict(metrics)
+        if self.dynamic_metrics_provider is not None:
+            extra_metrics = self.dynamic_metrics_provider(step)
+            if isinstance(extra_metrics, dict):
+                combined_metrics.update(extra_metrics)
+        self.root_logger.log_metrics(combined_metrics, step=step)
+        self.stage_logger.log_metrics(combined_metrics, step=step)
+        if self.on_log_metrics is not None:
+            self.on_log_metrics(combined_metrics, step)
 
     def close(self) -> None:
         self.stage_logger.close()
@@ -284,28 +318,45 @@ def build_stage_train_config(
     rollout_runner_id: str,
 ) -> rl_train.Config:
     stage = stage_runtime.stage
-    policy_config = RuntimePolicyConfig(
-        max_turns=stage.max_turns,
-        max_message_length=config.max_message_length,
-        max_trajectory_tokens=stage.max_trajectory_tokens,
-    )
-    dataset_builder = DiplomacyDatasetBuilder(
-        environment_kind=stage.environment_kind,
-        model_name_for_tokenizer=config.model_name,
-        renderer_name=config.renderer_name,
-        actor_runtime=actor_runtime,
-        policy_config=policy_config,
-        tracked_instruction_block=stage.tracked_instruction_block
-        if stage.tracked_instruction_block is not None
-        else config.tracked_instruction_block,
-        batch_size=stage.batch_size,
-        group_size=stage.group_size,
-        num_train_examples=stage.num_train_examples,
-        num_eval_examples=stage.num_eval_examples,
-        train_seed=stage.train_seed,
-        eval_seed=stage.eval_seed,
-        rollout_runner_id=rollout_runner_id,
-    )
+    if stage.environment_kind == "hybrid":
+        if not config.prompt_blocks:
+            raise ValueError("Hybrid curriculum requires stage-specific prompt blocks.")
+        dataset_builder = HybridDiplomacyDatasetBuilder(
+            model_name_for_tokenizer=config.model_name,
+            renderer_name=config.renderer_name,
+            actor_runtime=actor_runtime,
+            prompt_blocks=config.prompt_blocks,
+            batch_size=stage.batch_size,
+            group_size=stage.group_size,
+            total_batches=stage_runtime.num_batches,
+            train_seed=stage.train_seed,
+            eval_seed_base=stage.eval_seed,
+            num_eval_examples_per_environment=config.hybrid_eval_examples_per_environment,
+            rollout_runner_id=rollout_runner_id,
+        )
+    else:
+        policy_config = RuntimePolicyConfig(
+            max_turns=stage.max_turns,
+            max_message_length=config.max_message_length,
+            max_trajectory_tokens=stage.max_trajectory_tokens,
+        )
+        dataset_builder = DiplomacyDatasetBuilder(
+            environment_kind=stage.environment_kind,
+            model_name_for_tokenizer=config.model_name,
+            renderer_name=config.renderer_name,
+            actor_runtime=actor_runtime,
+            policy_config=policy_config,
+            tracked_instruction_block=stage.tracked_instruction_block
+            if stage.tracked_instruction_block is not None
+            else config.tracked_instruction_block,
+            batch_size=stage.batch_size,
+            group_size=stage.group_size,
+            num_train_examples=stage.num_train_examples,
+            num_eval_examples=stage.num_eval_examples,
+            train_seed=stage.train_seed,
+            eval_seed=stage.eval_seed,
+            rollout_runner_id=rollout_runner_id,
+        )
     return rl_train.Config(
         learning_rate=stage.learning_rate,
         dataset_builder=dataset_builder,
@@ -624,6 +675,45 @@ def _write_manifest(path: Path, manifest: dict[str, Any]) -> None:
     path.write_text(json.dumps(manifest, indent=2))
 
 
+def _hybrid_dynamic_metrics_provider(
+    dataset_builder: HybridDiplomacyDatasetBuilder,
+) -> Any:
+    def provider(step: int | None) -> dict[str, Any]:
+        phase = phase_for_batch(0 if step is None else max(0, int(step)))
+        metrics: dict[str, Any] = dataset_builder.metrics_for_step(step)
+        metrics["mix/current_phase_name"] = phase.name
+        return metrics
+
+    return provider
+
+
+def _hybrid_manifest_callback(
+    *,
+    manifest: dict[str, Any],
+    manifest_path: Path,
+    stage_runtime: StageRuntime,
+) -> Any:
+    def callback(metrics: dict[str, Any], step: int | None) -> None:
+        batch_index = 0 if step is None else max(0, int(step))
+        phase = phase_for_batch(batch_index)
+        manifest["current_stage"] = stage_runtime.stage.name
+        manifest["current_batch"] = min(batch_index + 1, stage_runtime.global_end_batch)
+        manifest["current_phase"] = phase.name
+        manifest["current_environment_weights"] = {
+            environment: float(weight)
+            for environment, weight in phase.environment_weights.items()
+        }
+        state_ckpt, sampler_ckpt = load_stage_checkpoints(stage_runtime.stage_log_dir)
+        checkpoint = state_ckpt or sampler_ckpt
+        if checkpoint is not None:
+            manifest["last_checkpoint_name"] = checkpoint.get("name")
+            manifest["last_checkpoint_batch"] = checkpoint.get("batch")
+        manifest["updated_at"] = datetime.now().isoformat()
+        _write_manifest(manifest_path, manifest)
+
+    return callback
+
+
 async def run_curriculum(config: CurriculumConfig) -> Path:
     validate_curriculum(config)
     run_name = resolve_run_name(config)
@@ -643,6 +733,7 @@ async def run_curriculum(config: CurriculumConfig) -> Path:
         "created_at": datetime.now().isoformat(),
         "status": "running",
         "single_tinker_training_run": True,
+        "curriculum_mode": "hybrid" if len(config.stages) == 1 and config.stages[0].environment_kind == "hybrid" else "staged",
         "model_name": config.model_name,
         "renderer_name": config.renderer_name,
         "wandb_project": config.wandb_project,
@@ -651,6 +742,19 @@ async def run_curriculum(config: CurriculumConfig) -> Path:
         "rollout_backend": "modal",
         "modal_rollout": asdict(config.modal_rollout),
         "total_batches": total_batches,
+        "phase_schedule": phase_schedule_payload()
+        if len(config.stages) == 1 and config.stages[0].environment_kind == "hybrid"
+        else [],
+        "current_batch": 0,
+        "current_phase": HYBRID_PHASE_SCHEDULE[0].name
+        if len(config.stages) == 1 and config.stages[0].environment_kind == "hybrid"
+        else None,
+        "current_environment_weights": {
+            environment: float(weight)
+            for environment, weight in HYBRID_PHASE_SCHEDULE[0].environment_weights.items()
+        }
+        if len(config.stages) == 1 and config.stages[0].environment_kind == "hybrid"
+        else None,
         "stages": [],
     }
     root_logger: ml_log.Logger | None = None
@@ -721,7 +825,13 @@ async def run_curriculum(config: CurriculumConfig) -> Path:
                 batch_offset=stage_runtime.global_start_batch,
             )
             evaluators = [builder() for builder in stage_cfg.evaluator_builders]
-            if maybe_test_dataset is not None:
+            if hasattr(stage_cfg.dataset_builder, "build_named_evaluators"):
+                evaluators.extend(
+                    stage_cfg.dataset_builder.build_named_evaluators(
+                        max_tokens=stage_cfg.max_tokens,
+                    )
+                )
+            elif maybe_test_dataset is not None:
                 evaluators.append(
                     RLTestSetEvaluator(
                         maybe_test_dataset,
@@ -733,6 +843,20 @@ async def run_curriculum(config: CurriculumConfig) -> Path:
                 root_logger=root_logger,
                 stage_log_dir=stage_runtime.stage_log_dir,
                 stage_config=stage_cfg,
+                dynamic_metrics_provider=(
+                    _hybrid_dynamic_metrics_provider(stage_cfg.dataset_builder)
+                    if isinstance(stage_cfg.dataset_builder, HybridDiplomacyDatasetBuilder)
+                    else None
+                ),
+                on_log_metrics=(
+                    _hybrid_manifest_callback(
+                        manifest=manifest,
+                        manifest_path=manifest_path,
+                        stage_runtime=stage_runtime,
+                    )
+                    if isinstance(stage_cfg.dataset_builder, HybridDiplomacyDatasetBuilder)
+                    else None
+                ),
             )
             previous_stage_runtime = stage_runtimes[stage_index - 1] if stage_index > 0 else None
             _seed_stage_sampler_checkpoint_from_previous_stage(
@@ -823,12 +947,28 @@ async def run_curriculum(config: CurriculumConfig) -> Path:
         )
         manifest["status"] = "completed"
         manifest["current_stage"] = None
+        manifest["current_batch"] = total_batches
+        if len(config.stages) == 1 and config.stages[0].environment_kind == "hybrid":
+            final_phase = phase_for_batch(max(0, total_batches - 1))
+            manifest["current_phase"] = final_phase.name
+            manifest["current_environment_weights"] = {
+                environment: float(weight)
+                for environment, weight in final_phase.environment_weights.items()
+            }
         manifest["completed_at"] = datetime.now().isoformat()
         manifest["rollout_backend_stats"] = dict(rollout_runner.summary())
         _write_manifest(manifest_path, manifest)
     except Exception as exc:
         manifest["status"] = "failed"
         manifest["current_stage"] = current_stage_name
+        if len(config.stages) == 1 and config.stages[0].environment_kind == "hybrid":
+            current_batch = int(manifest.get("current_batch", 0) or 0)
+            failed_phase = phase_for_batch(max(0, current_batch - 1))
+            manifest["current_phase"] = failed_phase.name
+            manifest["current_environment_weights"] = {
+                environment: float(weight)
+                for environment, weight in failed_phase.environment_weights.items()
+            }
         manifest["error"] = str(exc)
         manifest["updated_at"] = datetime.now().isoformat()
         manifest["rollout_backend_stats"] = dict(rollout_runner.summary())

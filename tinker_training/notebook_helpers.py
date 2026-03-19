@@ -12,6 +12,15 @@ from tinker_training.curriculum import (
     DEFAULT_LOG_ROOT,
     DEFAULT_WANDB_PROJECT,
 )
+from tinker_training.hybrid_schedule import (
+    HYBRID_BATCH_SIZE,
+    HYBRID_EVAL_EXAMPLES_PER_ENVIRONMENT,
+    HYBRID_GROUP_SIZE,
+    HYBRID_MAX_TOKENS,
+    HYBRID_MAX_TURNS_BY_ENVIRONMENT,
+    HYBRID_PHASE_SCHEDULE,
+    HYBRID_UI_TOTAL_BATCHES_DEFAULT,
+)
 from tinker_training.prompt_family import DEFAULT_PROMPT_FAMILY_DIR
 
 ENV_VAR_PURPOSES = {
@@ -42,48 +51,35 @@ def make_default_run_name(model_name: str) -> str:
 
 def notebook_defaults() -> dict[str, Any]:
     return {
-        "curriculum_preset": "full_v1",
         "model_name": "Qwen/Qwen3-30B-A3B-Instruct-2507",
         "log_root": DEFAULT_LOG_ROOT,
         "wandb_project": DEFAULT_WANDB_PROJECT,
-        "tracked_instruction_block_path": "",
         "prompt_family_dir": str(DEFAULT_PROMPT_FAMILY_DIR),
         "openrouter_model": "openai/gpt-5.4-mini",
         "modal_app_name": "diplomacy-grpo-rollouts",
         "modal_timeout_seconds": 900,
         "modal_cpu": 2.0,
         "modal_memory_mb": 4096,
-        "save_every": 10,
-        "eval_every": 5,
-        "num_groups_to_log": 2,
+        "save_every": 5,
+        "eval_every": 2,
+        "num_groups_to_log": 1,
         "learning_rate": 2e-5,
         "lora_rank": 32,
-        "stage1_train_examples": 64,
-        "stage1_eval_examples": 8,
-        "stage1_batch_size": 16,
-        "stage1_group_size": 4,
-        "stage1_max_tokens": 256,
-        "stage1_max_turns": 14,
-        "stage1_train_seed": 21,
-        "stage1_learning_rate": 3e-5,
-        "stage2_train_examples": 48,
-        "stage2_eval_examples": 8,
-        "stage2_batch_size": 12,
-        "stage2_group_size": 4,
-        "stage2_max_tokens": 384,
-        "stage2_max_turns": 20,
-        "stage2_train_seed": 37,
-        "stage2_learning_rate": 2e-5,
+        "hybrid_total_batches": HYBRID_UI_TOTAL_BATCHES_DEFAULT,
+        "hybrid_batch_size": HYBRID_BATCH_SIZE,
+        "hybrid_group_size": HYBRID_GROUP_SIZE,
+        "hybrid_eval_examples_per_environment": HYBRID_EVAL_EXAMPLES_PER_ENVIRONMENT,
+        "hybrid_max_tokens": HYBRID_MAX_TOKENS,
     }
 
 
 def build_train_command(
     *,
     script_path: Path,
-    curriculum_preset: str = "full_v1",
     model_name: str,
     log_root: str,
     wandb_project: str,
+    hybrid_total_batches: int,
     prompt_family_dir: str | None = None,
     openrouter_model: str,
     modal_app_name: str,
@@ -94,41 +90,24 @@ def build_train_command(
     eval_every: int,
     num_groups_to_log: int,
     learning_rate: float = 2e-5,
-    stage1_train_examples: int,
-    stage1_eval_examples: int,
-    stage1_batch_size: int,
-    stage1_group_size: int,
-    stage1_max_tokens: int,
-    stage1_max_turns: int,
-    stage1_train_seed: int,
-    stage1_learning_rate: float,
-    stage2_train_examples: int,
-    stage2_eval_examples: int,
-    stage2_batch_size: int,
-    stage2_group_size: int,
-    stage2_max_tokens: int,
-    stage2_max_turns: int,
-    stage2_train_seed: int,
-    stage2_learning_rate: float,
     lora_rank: int,
     enable_thinking: bool = False,
     renderer_name: str | None = None,
     run_name: str | None = None,
     initial_checkpoint_path: str | None = None,
-    tracked_instruction_block_path: str | None = None,
     python_executable: str | None = None,
 ) -> list[str]:
     command = [
         python_executable or sys.executable,
         str(script_path),
-        "--curriculum-preset",
-        curriculum_preset,
         "--model-name",
         model_name,
         "--log-root",
         log_root,
         "--wandb-project",
         wandb_project,
+        "--hybrid-total-batches",
+        str(int(hybrid_total_batches)),
         "--openrouter-model",
         openrouter_model,
         "--modal-app-name",
@@ -149,42 +128,6 @@ def build_train_command(
         str(float(learning_rate)),
         "--lora-rank",
         str(int(lora_rank)),
-        "--stage1-train-examples",
-        str(int(stage1_train_examples)),
-        "--stage1-eval-examples",
-        str(int(stage1_eval_examples)),
-        "--stage1-batch-size",
-        str(int(stage1_batch_size)),
-        "--stage1-group-size",
-        str(int(stage1_group_size)),
-        "--stage1-max-tokens",
-        str(int(stage1_max_tokens)),
-        "--stage1-max-turns",
-        str(int(stage1_max_turns)),
-        "--stage1-train-seed",
-        str(int(stage1_train_seed)),
-        "--stage1-learning-rate",
-        str(float(stage1_learning_rate)),
-        "--stage1-lora-rank",
-        str(int(lora_rank)),
-        "--stage2-train-examples",
-        str(int(stage2_train_examples)),
-        "--stage2-eval-examples",
-        str(int(stage2_eval_examples)),
-        "--stage2-batch-size",
-        str(int(stage2_batch_size)),
-        "--stage2-group-size",
-        str(int(stage2_group_size)),
-        "--stage2-max-tokens",
-        str(int(stage2_max_tokens)),
-        "--stage2-max-turns",
-        str(int(stage2_max_turns)),
-        "--stage2-train-seed",
-        str(int(stage2_train_seed)),
-        "--stage2-learning-rate",
-        str(float(stage2_learning_rate)),
-        "--stage2-lora-rank",
-        str(int(lora_rank)),
     ]
     if prompt_family_dir and prompt_family_dir.strip():
         command.extend(["--prompt-family-dir", prompt_family_dir.strip()])
@@ -196,9 +139,23 @@ def build_train_command(
         command.extend(["--run-name", run_name.strip()])
     if initial_checkpoint_path and initial_checkpoint_path.strip():
         command.extend(["--initial-checkpoint-path", initial_checkpoint_path.strip()])
-    if tracked_instruction_block_path and tracked_instruction_block_path.strip():
-        command.extend(["--tracked-instruction-block-path", tracked_instruction_block_path.strip()])
     return command
+
+
+def hybrid_phase_summary() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": phase.name,
+            "start_batch": phase.start_batch,
+            "end_batch_exclusive": phase.end_batch_exclusive,
+            "environment_weights": dict(phase.environment_weights),
+        }
+        for phase in HYBRID_PHASE_SCHEDULE
+    ]
+
+
+def hybrid_turn_summary() -> dict[str, int]:
+    return dict(HYBRID_MAX_TURNS_BY_ENVIRONMENT)
 
 
 def resolve_manifest_path(

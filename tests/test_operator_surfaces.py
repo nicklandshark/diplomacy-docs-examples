@@ -19,7 +19,7 @@ def test_marimo_notebook_contains_cli_and_manifest_controls() -> None:
     assert "mo.ui.dropdown" not in text
     assert "# Tinker GRPO Operator Notebook" in text
     assert "## Controls" in text
-    assert "Use this page to launch and monitor one multi-stage GRPO training run for Diplomacy." in text
+    assert "Use this page to launch and monitor one hybrid GRPO training run for Diplomacy." in text
     assert "GRPO (Group Relative Policy Optimization)" in text
     assert "Diplomacy is a multi-agent negotiation game" in text
     assert "`tool_accuracy`" in text
@@ -27,12 +27,14 @@ def test_marimo_notebook_contains_cli_and_manifest_controls() -> None:
     assert "`supported_target`" in text
     assert "`cooperative_press`" in text
     assert "`full_press`" in text
-    assert "default `full_v1` five-stage easy-to-hard progression" in text
+    assert "shared hybrid curriculum" in text
     assert "Prompt family" in text
     assert "**Control guide**" in text
     assert "**Core controls**" in text
-    assert "**Stage controls**" in text
     assert "**Modal controls**" in text
+    assert "### Hybrid Phase Schedule" in text
+    assert "### Per-Environment Turn Limits" in text
+    assert "## Hybrid Progress" in text
     assert "mo.vstack(" in text
     assert 'importlib.import_module("tinker_training.notebook_helpers")' in text
     assert "from tinker_training.notebook_helpers import" not in text
@@ -51,6 +53,8 @@ def test_marimo_notebook_contains_cli_and_manifest_controls() -> None:
     assert "launch_blocker=" in text
     assert "Auto-refresh process and manifest" in text
     assert "refresh_monitor.value" in text
+    assert "default `full_v1`" not in text
+    assert "legacy two-stage" not in text
 
 
 def test_readme_contains_curriculum_guide() -> None:
@@ -95,6 +99,8 @@ def test_readme_references_marimo_notebook() -> None:
     assert "## Next Steps" in text
     assert "mix into curriculum training" in text
     assert "Modal workers return trajectories and metrics; they do not open their own W&B runs." not in text
+    assert "stage 1 defaults" not in text
+    assert "stage 2 defaults" not in text
 
 
 def test_curriculum_doc_removed() -> None:

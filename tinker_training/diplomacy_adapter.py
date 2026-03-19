@@ -59,6 +59,16 @@ from tinker_training.rollout_backends import (
     deserialize_trajectory,
     get_trajectory_runner,
 )
+from tinker_training.hybrid_schedule import (
+    HYBRID_ENVIRONMENTS,
+    HYBRID_EVAL_SEED_OFFSETS,
+    HYBRID_MAX_TRAJECTORY_TOKENS_BY_ENVIRONMENT,
+    HYBRID_MAX_TURNS_BY_ENVIRONMENT,
+    HYBRID_TRAIN_SEED_OFFSETS,
+    batch_fraction_metrics,
+    phase_for_batch,
+    sample_environment_plan,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1259,6 +1269,225 @@ class DiplomacyRLDataset(RLDataset):
 
     def __len__(self) -> int:
         return len(self.env_group_builders) // self.batch_size
+
+
+class HybridDiplomacyRLDataset(RLDataset):
+    def __init__(self, batches: list[list[DiplomacyEnvGroupBuilder]]) -> None:
+        self.batches = batches
+
+    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
+        return self.batches[index]
+
+    def __len__(self) -> int:
+        return len(self.batches)
+
+
+def _build_rows_for_environment(
+    environment_kind: EnvironmentKind,
+    *,
+    num_sessions: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    if environment_kind == "tool_accuracy":
+        return build_tool_accuracy_dataset(num_sessions=num_sessions, seed=seed).to_list()
+    if environment_kind == "target_execution":
+        return build_target_execution_dataset(num_sessions=num_sessions, seed=seed).to_list()
+    if environment_kind == "supported_target":
+        return build_supported_target_dataset(num_sessions=num_sessions, seed=seed).to_list()
+    if environment_kind == "cooperative_press":
+        return build_cooperative_press_dataset(num_sessions=num_sessions, seed=seed).to_list()
+    return build_full_press_dataset(num_sessions=num_sessions, seed=seed).to_list()
+
+
+def _make_env_group_builder(
+    *,
+    datum: dict[str, Any],
+    environment_kind: EnvironmentKind,
+    model_name_for_tokenizer: str,
+    renderer_name: str,
+    group_size: int,
+    actor_runtime: ActorRuntimeConfig,
+    tracked_instruction_block: str | None,
+    rollout_runner_id: str | None,
+) -> DiplomacyEnvGroupBuilder:
+    return DiplomacyEnvGroupBuilder(
+        datum=datum,
+        environment_kind=environment_kind,
+        model_name=model_name_for_tokenizer,
+        renderer_name=renderer_name,
+        group_size=group_size,
+        actor_runtime=actor_runtime,
+        policy_config=RuntimePolicyConfig(
+            max_turns=HYBRID_MAX_TURNS_BY_ENVIRONMENT[environment_kind],
+            max_trajectory_tokens=HYBRID_MAX_TRAJECTORY_TOKENS_BY_ENVIRONMENT[environment_kind],
+        ),
+        tracked_instruction_block=tracked_instruction_block,
+        rollout_runner_id=rollout_runner_id,
+    )
+
+
+class HybridDiplomacyDatasetBuilder(RLDatasetBuilder):
+    def __init__(
+        self,
+        *,
+        model_name_for_tokenizer: str,
+        renderer_name: str,
+        actor_runtime: ActorRuntimeConfig,
+        prompt_blocks: dict[EnvironmentKind, str],
+        batch_size: int,
+        group_size: int,
+        total_batches: int,
+        train_seed: int,
+        eval_seed_base: int,
+        num_eval_examples_per_environment: int,
+        rollout_runner_id: str | None = None,
+    ) -> None:
+        object.__setattr__(self, "model_name_for_tokenizer", model_name_for_tokenizer)
+        object.__setattr__(self, "renderer_name", renderer_name)
+        object.__setattr__(self, "actor_runtime", actor_runtime)
+        object.__setattr__(self, "prompt_blocks", prompt_blocks)
+        object.__setattr__(self, "batch_size", batch_size)
+        object.__setattr__(self, "group_size", group_size)
+        object.__setattr__(self, "total_batches", total_batches)
+        object.__setattr__(self, "train_seed", train_seed)
+        object.__setattr__(self, "eval_seed_base", eval_seed_base)
+        object.__setattr__(
+            self,
+            "num_eval_examples_per_environment",
+            num_eval_examples_per_environment,
+        )
+        object.__setattr__(self, "rollout_runner_id", rollout_runner_id)
+        object.__setattr__(
+            self,
+            "_train_plan",
+            sample_environment_plan(
+            total_batches=total_batches,
+            batch_size=batch_size,
+            seed=train_seed,
+            ),
+        )
+        object.__setattr__(self, "_cached_train_dataset", None)
+        object.__setattr__(self, "_cached_eval_datasets", None)
+
+    @property
+    def train_plan(self) -> tuple[tuple[EnvironmentKind, ...], ...]:
+        return self._train_plan
+
+    def metrics_for_step(self, step: int | None) -> dict[str, float]:
+        if not self._train_plan:
+            return {
+                f"mix/train_batch_fraction/{environment}": 0.0
+                for environment in HYBRID_ENVIRONMENTS
+            } | {
+                "mix/current_phase_index": 1.0,
+            }
+        batch_index = 0 if step is None else max(0, min(int(step), len(self._train_plan) - 1))
+        phase = phase_for_batch(batch_index)
+        metrics = batch_fraction_metrics(
+            self._train_plan[batch_index],
+            batch_size=self.batch_size,
+        )
+        metrics["mix/current_phase_index"] = float(phase.index)
+        return metrics
+
+    def phase_name_for_step(self, step: int | None) -> str:
+        batch_index = 0 if step is None else max(0, int(step))
+        return phase_for_batch(batch_index).name
+
+    def environment_weights_for_step(self, step: int | None) -> dict[EnvironmentKind, float]:
+        batch_index = 0 if step is None else max(0, int(step))
+        return dict(phase_for_batch(batch_index).environment_weights)
+
+    def build_named_evaluators(self, *, max_tokens: int):
+        if self._cached_eval_datasets is None:
+            raise RuntimeError("Hybrid eval datasets are unavailable before dataset construction.")
+        from tinker_cookbook.rl.metric_util import RLTestSetEvaluator
+
+        return [
+            RLTestSetEvaluator(
+                dataset,
+                max_tokens=max_tokens,
+                name=f"test/{environment_kind}",
+            )
+            for environment_kind, dataset in self._cached_eval_datasets.items()
+        ]
+
+    async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
+        if self._cached_train_dataset is not None:
+            return self._cached_train_dataset, None
+
+        train_counts = {
+            environment_kind: sum(
+                1
+                for batch in self._train_plan
+                for environment in batch
+                if environment == environment_kind
+            )
+            for environment_kind in HYBRID_ENVIRONMENTS
+        }
+        train_rows_by_environment = {
+            environment_kind: (
+                _build_rows_for_environment(
+                    environment_kind,
+                    num_sessions=count,
+                    seed=self.train_seed + HYBRID_TRAIN_SEED_OFFSETS[environment_kind],
+                )
+                if count > 0
+                else []
+            )
+            for environment_kind, count in train_counts.items()
+        }
+        train_offsets = {environment_kind: 0 for environment_kind in HYBRID_ENVIRONMENTS}
+        train_batches: list[list[DiplomacyEnvGroupBuilder]] = []
+        for batch in self._train_plan:
+            builders: list[DiplomacyEnvGroupBuilder] = []
+            for environment_kind in batch:
+                environment_rows = train_rows_by_environment[environment_kind]
+                row_index = train_offsets[environment_kind]
+                builders.append(
+                    _make_env_group_builder(
+                        datum=environment_rows[row_index],
+                        environment_kind=environment_kind,
+                        model_name_for_tokenizer=self.model_name_for_tokenizer,
+                        renderer_name=self.renderer_name,
+                        group_size=self.group_size,
+                        actor_runtime=self.actor_runtime,
+                        tracked_instruction_block=self.prompt_blocks[environment_kind],
+                        rollout_runner_id=self.rollout_runner_id,
+                    )
+                )
+                train_offsets[environment_kind] += 1
+            train_batches.append(builders)
+
+        object.__setattr__(self, "_cached_train_dataset", HybridDiplomacyRLDataset(train_batches))
+        object.__setattr__(
+            self,
+            "_cached_eval_datasets",
+            {
+            environment_kind: DiplomacyRLDataset(
+                [
+                    _make_env_group_builder(
+                        datum=row,
+                        environment_kind=environment_kind,
+                        model_name_for_tokenizer=self.model_name_for_tokenizer,
+                        renderer_name=self.renderer_name,
+                        group_size=self.group_size,
+                        actor_runtime=self.actor_runtime,
+                        tracked_instruction_block=self.prompt_blocks[environment_kind],
+                        rollout_runner_id=self.rollout_runner_id,
+                    )
+                    for row in _build_rows_for_environment(
+                        environment_kind,
+                        num_sessions=self.num_eval_examples_per_environment,
+                        seed=self.eval_seed_base + HYBRID_EVAL_SEED_OFFSETS[environment_kind],
+                    )
+                ],
+                batch_size=self.num_eval_examples_per_environment,
+            )
+            for environment_kind in HYBRID_ENVIRONMENTS
+            },
+        )
+        return self._cached_train_dataset, None
 
 
 @chz.chz

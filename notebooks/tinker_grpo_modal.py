@@ -26,16 +26,15 @@ def _():
     format_missing_required_env_message = (
         notebook_helpers.format_missing_required_env_message
     )
+    hybrid_phase_summary = notebook_helpers.hybrid_phase_summary
+    hybrid_turn_summary = notebook_helpers.hybrid_turn_summary
     launch_once = notebook_helpers.launch_once
     make_default_run_name = notebook_helpers.make_default_run_name
     notebook_defaults = notebook_helpers.notebook_defaults
     preflight_env = notebook_helpers.preflight_env
     resolve_manifest_path = notebook_helpers.resolve_manifest_path
 
-    # Keep the subprocess bookkeeping in kernel-global state so a click on the
-    # launch button survives cell reruns without introducing a state self-loop.
     process_state = globals().setdefault("_NOTEBOOK_PROCESS_STATE", {})
-
     defaults = notebook_defaults()
     return (
         Path,
@@ -43,6 +42,8 @@ def _():
         defaults,
         env_var_purposes,
         format_missing_required_env_message,
+        hybrid_phase_summary,
+        hybrid_turn_summary,
         json,
         launch_once,
         make_default_run_name,
@@ -59,7 +60,6 @@ def _():
 
 @app.cell
 def _(defaults, make_default_run_name, mo):
-    tracked_instruction_block_path = defaults.get("tracked_instruction_block_path", "")
     model_name = mo.ui.text(
         value=defaults["model_name"],
         label="Model to train",
@@ -96,6 +96,10 @@ def _(defaults, make_default_run_name, mo):
         value="",
         label="Manifest path override (optional)",
     )
+    hybrid_total_batches = mo.ui.number(
+        value=defaults["hybrid_total_batches"],
+        label="Hybrid total batches",
+    )
     save_every = mo.ui.number(
         value=defaults["save_every"],
         label="Save every N global batches",
@@ -108,77 +112,14 @@ def _(defaults, make_default_run_name, mo):
         value=defaults["num_groups_to_log"],
         label="Rich-log groups per batch",
     )
+    learning_rate = mo.ui.number(
+        value=defaults["learning_rate"],
+        label="Learning rate",
+    )
     lora_rank = mo.ui.number(
         value=defaults["lora_rank"],
-        label="LoRA rank (shared across both stages)",
+        label="LoRA rank",
     )
-
-    stage1_train_examples = mo.ui.number(
-        value=defaults["stage1_train_examples"],
-        label="Stage 1 train examples",
-    )
-    stage1_eval_examples = mo.ui.number(
-        value=defaults["stage1_eval_examples"],
-        label="Stage 1 eval examples",
-    )
-    stage1_batch_size = mo.ui.number(
-        value=defaults["stage1_batch_size"],
-        label="Stage 1 batch size",
-    )
-    stage1_group_size = mo.ui.number(
-        value=defaults["stage1_group_size"],
-        label="Stage 1 group size",
-    )
-    stage1_max_tokens = mo.ui.number(
-        value=defaults["stage1_max_tokens"],
-        label="Stage 1 max output tokens",
-    )
-    stage1_max_turns = mo.ui.number(
-        value=defaults["stage1_max_turns"],
-        label="Stage 1 max turns",
-    )
-    stage1_train_seed = mo.ui.number(
-        value=defaults["stage1_train_seed"],
-        label="Stage 1 train seed",
-    )
-    stage1_learning_rate = mo.ui.number(
-        value=defaults["stage1_learning_rate"],
-        label="Stage 1 learning rate",
-    )
-
-    stage2_train_examples = mo.ui.number(
-        value=defaults["stage2_train_examples"],
-        label="Stage 2 train examples",
-    )
-    stage2_eval_examples = mo.ui.number(
-        value=defaults["stage2_eval_examples"],
-        label="Stage 2 eval examples",
-    )
-    stage2_batch_size = mo.ui.number(
-        value=defaults["stage2_batch_size"],
-        label="Stage 2 batch size",
-    )
-    stage2_group_size = mo.ui.number(
-        value=defaults["stage2_group_size"],
-        label="Stage 2 group size",
-    )
-    stage2_max_tokens = mo.ui.number(
-        value=defaults["stage2_max_tokens"],
-        label="Stage 2 max output tokens",
-    )
-    stage2_max_turns = mo.ui.number(
-        value=defaults["stage2_max_turns"],
-        label="Stage 2 max turns",
-    )
-    stage2_train_seed = mo.ui.number(
-        value=defaults["stage2_train_seed"],
-        label="Stage 2 train seed",
-    )
-    stage2_learning_rate = mo.ui.number(
-        value=defaults["stage2_learning_rate"],
-        label="Stage 2 learning rate",
-    )
-
     openrouter_model = mo.ui.text(
         value=defaults["openrouter_model"],
         label="OpenRouter actor model",
@@ -213,8 +154,10 @@ def _(defaults, make_default_run_name, mo):
     return (
         enable_thinking,
         eval_every,
+        hybrid_total_batches,
         initial_checkpoint,
         launch_button,
+        learning_rate,
         log_root,
         lora_rank,
         manifest_path,
@@ -230,23 +173,6 @@ def _(defaults, make_default_run_name, mo):
         renderer_name,
         run_name,
         save_every,
-        stage1_batch_size,
-        stage1_eval_examples,
-        stage1_group_size,
-        stage1_learning_rate,
-        stage1_max_tokens,
-        stage1_max_turns,
-        stage1_train_examples,
-        stage1_train_seed,
-        stage2_batch_size,
-        stage2_eval_examples,
-        stage2_group_size,
-        stage2_learning_rate,
-        stage2_max_tokens,
-        stage2_max_turns,
-        stage2_train_examples,
-        stage2_train_seed,
-        tracked_instruction_block_path,
         wandb_project,
     )
 
@@ -258,8 +184,10 @@ def _(
     env_var_purposes,
     eval_every,
     format_missing_required_env_message,
+    hybrid_total_batches,
     initial_checkpoint,
     launch_button,
+    learning_rate,
     log_root,
     lora_rank,
     manifest_path,
@@ -279,23 +207,6 @@ def _(
     save_every,
     script_path,
     shlex,
-    stage1_batch_size,
-    stage1_eval_examples,
-    stage1_group_size,
-    stage1_learning_rate,
-    stage1_max_tokens,
-    stage1_max_turns,
-    stage1_train_examples,
-    stage1_train_seed,
-    stage2_batch_size,
-    stage2_eval_examples,
-    stage2_group_size,
-    stage2_learning_rate,
-    stage2_max_tokens,
-    stage2_max_turns,
-    stage2_train_examples,
-    stage2_train_seed,
-    tracked_instruction_block_path,
     wandb_project,
 ):
     command_args = build_train_command(
@@ -303,6 +214,7 @@ def _(
         model_name=model_name.value,
         log_root=log_root.value,
         wandb_project=wandb_project.value,
+        hybrid_total_batches=int(hybrid_total_batches.value),
         prompt_family_dir=prompt_family_dir.value,
         openrouter_model=openrouter_model.value,
         modal_app_name=modal_app_name.value,
@@ -312,28 +224,12 @@ def _(
         save_every=int(save_every.value),
         eval_every=int(eval_every.value),
         num_groups_to_log=int(num_groups_to_log.value),
-        stage1_train_examples=int(stage1_train_examples.value),
-        stage1_eval_examples=int(stage1_eval_examples.value),
-        stage1_batch_size=int(stage1_batch_size.value),
-        stage1_group_size=int(stage1_group_size.value),
-        stage1_max_tokens=int(stage1_max_tokens.value),
-        stage1_max_turns=int(stage1_max_turns.value),
-        stage1_train_seed=int(stage1_train_seed.value),
-        stage1_learning_rate=float(stage1_learning_rate.value),
-        stage2_train_examples=int(stage2_train_examples.value),
-        stage2_eval_examples=int(stage2_eval_examples.value),
-        stage2_batch_size=int(stage2_batch_size.value),
-        stage2_group_size=int(stage2_group_size.value),
-        stage2_max_tokens=int(stage2_max_tokens.value),
-        stage2_max_turns=int(stage2_max_turns.value),
-        stage2_train_seed=int(stage2_train_seed.value),
-        stage2_learning_rate=float(stage2_learning_rate.value),
+        learning_rate=float(learning_rate.value),
         lora_rank=int(lora_rank.value),
         enable_thinking=bool(enable_thinking.value),
         renderer_name=renderer_name.value,
         run_name=run_name.value,
         initial_checkpoint_path=initial_checkpoint.value,
-        tracked_instruction_block_path=tracked_instruction_block_path,
     )
     command = shlex.join(command_args)
     manifest_target = str(
@@ -369,55 +265,62 @@ def _(
 @app.cell
 def _(
     command,
-    command_args,
+    defaults,
     enable_thinking,
-    eval_every,
-    initial_checkpoint,
+    hybrid_phase_summary,
+    hybrid_total_batches,
+    hybrid_turn_summary,
     launch_blocker,
+    launch_button,
+    learning_rate,
     log_root,
     lora_rank,
-    mo,
-    num_groups_to_log,
-    openrouter_model,
-    optional_env_lines,
-    prompt_family_dir,
-    renderer_name,
-    required_env_lines,
-    refresh_monitor,
-    run_name,
-    save_every,
-    stage1_batch_size,
-    stage1_eval_examples,
-    stage1_group_size,
-    stage1_learning_rate,
-    stage1_max_tokens,
-    stage1_max_turns,
-    stage1_train_examples,
-    stage1_train_seed,
-    stage2_batch_size,
-    stage2_eval_examples,
-    stage2_group_size,
-    stage2_learning_rate,
-    stage2_max_tokens,
-    stage2_max_turns,
-    stage2_train_examples,
-    stage2_train_seed,
-    launch_button,
     modal_app_name,
     modal_cpu,
     modal_memory,
     modal_timeout,
     model_name,
-    wandb_project,
+    mo,
+    num_groups_to_log,
+    openrouter_model,
+    optional_env_lines,
+    prompt_family_dir,
+    refresh_monitor,
+    renderer_name,
+    required_env_lines,
+    run_name,
+    save_every,
+    eval_every,
+    initial_checkpoint,
     manifest_path,
+    wandb_project,
 ):
+    phase_lines = []
+    for phase in hybrid_phase_summary():
+        end_text = (
+            f"{phase['end_batch_exclusive'] - 1}"
+            if phase["end_batch_exclusive"] is not None
+            else "tail"
+        )
+        weights = ", ".join(
+            f"{environment}={weight:.2f}"
+            for environment, weight in phase["environment_weights"].items()
+        )
+        phase_lines.append(
+            f"- `{phase['name']}`: batches `{phase['start_batch']}` to `{end_text}` with {weights}"
+        )
+    turn_lines = "\n".join(
+        f"- `{environment}`: `max_turns={max_turns}`"
+        for environment, max_turns in hybrid_turn_summary().items()
+    )
+
     mo.vstack(
         [
             mo.md(
                 """
                 # Tinker GRPO Operator Notebook
 
-                Use this page to launch and monitor one multi-stage GRPO training run for Diplomacy.
+                Use this page to launch and monitor one hybrid GRPO training run for Diplomacy.
 
                 Diplomacy is a multi-agent negotiation game: the policy must read game state and messages,
                 communicate with other powers, and submit legal orders under turn limits.
@@ -427,16 +330,16 @@ def _(
                 separate value model.
 
                 When you click `Launch training`, marimo starts `scripts/train_tinker_grpo_curriculum.py`
-                as a subprocess on the machine hosting this notebook. That trainer then runs one shared
-                curriculum with the default `full_v1` five-stage easy-to-hard progression:
+                as a subprocess on the machine hosting this notebook. That trainer runs one shared hybrid curriculum
+                with a fixed easy-to-hard mixture over:
 
-                1. `tool_accuracy`: short-horizon drills for reading, messaging, and legal action tools.
-                2. `target_execution`: no-press target-conversion drills focused on adjudicated success.
-                3. `supported_target`: one-counterpart coordination where the target requires a specific support pattern.
-                4. `cooperative_press`: easier full-press tasks with one cooperative counterpart.
-                5. `full_press`: the hardest unrestricted stage, continuing from the same shared checkpoint.
+                1. `tool_accuracy`
+                2. `target_execution`
+                3. `supported_target`
+                4. `cooperative_press`
+                5. `full_press`
 
-                This notebook is only the control plane. It launches the trainer, shows the resolved command,
+                The notebook is only the control plane. It launches the trainer, shows the resolved command,
                 and monitors `curriculum_manifest.json`. Rollout episodes still execute on Modal workers.
                 """
             ),
@@ -444,7 +347,11 @@ def _(
             mo.hstack([model_name, enable_thinking, renderer_name], wrap=True, justify="start"),
             mo.hstack([run_name, log_root, wandb_project], wrap=True, justify="start"),
             mo.hstack([initial_checkpoint, prompt_family_dir, manifest_path], wrap=True, justify="start"),
-            mo.hstack([save_every, eval_every, num_groups_to_log, lora_rank], wrap=True, justify="start"),
+            mo.hstack(
+                [hybrid_total_batches, save_every, eval_every, num_groups_to_log, learning_rate, lora_rank],
+                wrap=True,
+                justify="start",
+            ),
             mo.md(
                 """
                 **Control guide**
@@ -452,34 +359,15 @@ def _(
                 **Core controls**
 
                 - `Model to train`: base checkpoint for the trainable policy.
-                - `Use thinking-enabled renderer`: opt into the model's thinking-capable default renderer when supported.
                 - `Renderer override`: only use this if you need to force a specific renderer.
                 - `Run name`: output folder and W&B run name.
                 - `Log root`: parent directory for manifests, checkpoints, and logs.
                 - `Initial checkpoint`: warm-start checkpoint if you are not resuming from the existing run folder.
-                - `Prompt family`: the stage-specific tracked-policy prompts used by the default five-stage curriculum.
-                - `Manifest path override`: override the default `curriculum_manifest.json` location if you need to monitor another path.
-                - `Save every` / `Eval every`: cadence in global curriculum batches.
+                - `Prompt family`: the tracked-policy prompts used for the five environment variants.
+                - `Hybrid total batches`: total number of train batches in the mixed curriculum.
+                - `Save every` / `Eval every`: cadence in global hybrid batches.
                 - `Rich-log groups per batch`: how many groups get HTML and logtree output.
-                - `LoRA rank`: shared adapter rank for the full curriculum.
-
-                **Stage controls**
-
-                The numeric stage controls below are legacy two-stage overrides. The default `full_v1`
-                notebook path uses the built-in five-stage preset and ignores them unless you deliberately
-                launch the legacy curriculum from the command line outside this notebook.
-
-                - `train examples`: number of sampled sessions used for training in that stage.
-                - `eval examples`: number of sampled sessions used for evaluation in that stage.
-                - `batch size`: number of prompt groups per optimizer batch.
-                - `group size`: number of trajectories sampled per prompt group.
-                - `max output tokens`: per-trajectory generation cap.
-                - `max turns`: environment turn cap.
-                - `train seed`: dataset seed.
-                - `learning rate`: stage-specific learning rate.
-
-                The default five-stage preset is intentionally conservative to control spend:
-                `64/8`, `64/8`, `64/8`, `48/8`, `48/8` train/eval examples across the five stages.
+                - `Learning rate` / `LoRA rank`: one shared optimizer configuration for the whole hybrid run.
 
                 **Modal controls**
 
@@ -488,47 +376,17 @@ def _(
                 - `Modal timeout` / `Modal CPU` / `Modal memory`: per-worker resource sizing.
                 """
             ),
-            mo.md("### Stage 1 (`tool_accuracy`)"),
-            mo.hstack(
-                [
-                    stage1_train_examples,
-                    stage1_eval_examples,
-                    stage1_batch_size,
-                    stage1_group_size,
-                ],
-                wrap=True,
-                justify="start",
-            ),
-            mo.hstack(
-                [
-                    stage1_max_tokens,
-                    stage1_max_turns,
-                    stage1_train_seed,
-                    stage1_learning_rate,
-                ],
-                wrap=True,
-                justify="start",
-            ),
-            mo.md("### Stage 2 (`full_press`)"),
-            mo.hstack(
-                [
-                    stage2_train_examples,
-                    stage2_eval_examples,
-                    stage2_batch_size,
-                    stage2_group_size,
-                ],
-                wrap=True,
-                justify="start",
-            ),
-            mo.hstack(
-                [
-                    stage2_max_tokens,
-                    stage2_max_turns,
-                    stage2_train_seed,
-                    stage2_learning_rate,
-                ],
-                wrap=True,
-                justify="start",
+            mo.md("### Hybrid Phase Schedule\n" + "\n".join(phase_lines)),
+            mo.md("### Per-Environment Turn Limits\n" + turn_lines),
+            mo.md(
+                f"""
+                ### Fixed Hybrid Defaults
+
+                - `batch_size={defaults['hybrid_batch_size']}`
+                - `group_size={defaults['hybrid_group_size']}`
+                - `eval_examples_per_environment={defaults['hybrid_eval_examples_per_environment']}`
+                - `max_tokens={defaults['hybrid_max_tokens']}`
+                """
             ),
             mo.md("### Backend"),
             mo.hstack(
@@ -536,8 +394,7 @@ def _(
                 wrap=True,
                 justify="start",
             ),
-            mo.hstack([refresh_monitor], justify="start"),
-            launch_button,
+            mo.hstack([refresh_monitor, launch_button], justify="start"),
             mo.md(
                 f"""
                 ## Launch
@@ -555,10 +412,15 @@ def _(
                 {optional_env_lines}
                 """
             ),
+            (
+                mo.md(f"**Launch blocked:** {launch_blocker}")
+                if launch_blocker
+                else mo.md("")
+            ),
         ],
         gap=1.0,
     )
-    return command_args, launch_blocker
+    return command, launch_button
 
 
 @app.cell
@@ -605,6 +467,26 @@ def _(
             f"- Last command: `{shlex.join(process_snapshot['command'])}`"
         )
 
+    summary_lines = []
+    if isinstance(manifest_data, dict):
+        summary_lines.extend(
+            [
+                f"- Status: `{manifest_data.get('status')}`",
+                f"- Current stage: `{manifest_data.get('current_stage')}`",
+                f"- Current batch: `{manifest_data.get('current_batch')}` / `{manifest_data.get('total_batches')}`",
+                f"- Current phase: `{manifest_data.get('current_phase')}`",
+                f"- Last checkpoint: `{manifest_data.get('last_checkpoint_name')}`",
+            ]
+        )
+        current_weights = manifest_data.get("current_environment_weights")
+        if isinstance(current_weights, dict):
+            weights_text = ", ".join(
+                f"{environment}={weight:.2f}"
+                for environment, weight in current_weights.items()
+                if isinstance(weight, (int, float))
+            )
+            summary_lines.append(f"- Current environment weights: `{weights_text}`")
+
     manifest_view = (
         f"```json\n{json.dumps(manifest_data, indent=2)}\n```"
         if manifest_data is not None
@@ -613,6 +495,10 @@ def _(
     mo.vstack(
         [
             mo.md("## Process\n\n" + "\n".join(process_details)),
+            mo.md(
+                "## Hybrid Progress\n\n"
+                + ("\n".join(summary_lines) if summary_lines else "Manifest not written yet.")
+            ),
             mo.md("## Manifest\n\n" + manifest_view),
         ],
         gap=1.0,

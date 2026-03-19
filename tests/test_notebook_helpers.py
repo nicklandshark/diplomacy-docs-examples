@@ -40,10 +40,10 @@ class _FakePopenFactory:
 def test_build_train_command_and_manifest_path() -> None:
     command = build_train_command(
         script_path=Path("scripts/train_tinker_grpo_curriculum.py"),
-        curriculum_preset="legacy_two_stage",
         model_name="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         log_root="~/runs",
         wandb_project="demo",
+        hybrid_total_batches=20,
         openrouter_model="google/gemini-3-flash-preview",
         modal_app_name="rollout-app",
         modal_timeout_seconds=123,
@@ -52,43 +52,25 @@ def test_build_train_command_and_manifest_path() -> None:
         save_every=10,
         eval_every=5,
         num_groups_to_log=2,
-        stage1_train_examples=10,
-        stage1_eval_examples=4,
-        stage1_batch_size=2,
-        stage1_group_size=2,
-        stage1_max_tokens=64,
-        stage1_max_turns=8,
-        stage1_train_seed=1,
-        stage1_learning_rate=3e-5,
-        stage2_train_examples=20,
-        stage2_eval_examples=6,
-        stage2_batch_size=4,
-        stage2_group_size=4,
-        stage2_max_tokens=96,
-        stage2_max_turns=12,
-        stage2_train_seed=2,
-        stage2_learning_rate=2e-5,
         lora_rank=32,
         renderer_name="qwen3_disable_thinking",
         run_name="demo-run",
         initial_checkpoint_path="checkpoint://start",
-        tracked_instruction_block_path="prompts/locked.txt",
     )
 
-    assert command[:4] == [
+    assert command[:2] == [
         sys.executable,
         "scripts/train_tinker_grpo_curriculum.py",
-        "--curriculum-preset",
-        "legacy_two_stage",
     ]
-    assert command[4:6] == [
+    assert command[2:4] == [
         "--model-name",
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
     ]
+    assert "--hybrid-total-batches" in command
     assert "--renderer-name" in command
     assert "--run-name" in command
     assert "--initial-checkpoint-path" in command
-    assert "--tracked-instruction-block-path" in command
+    assert "--curriculum-preset" not in command
     assert resolve_manifest_path(log_root="~/runs", run_name="demo-run", manifest_override=None).as_posix().endswith(
         "demo-run/curriculum_manifest.json"
     )
@@ -97,14 +79,14 @@ def test_build_train_command_and_manifest_path() -> None:
 def test_notebook_defaults_use_reduced_rollout_counts() -> None:
     defaults = notebook_defaults()
 
-    assert defaults["curriculum_preset"] == "full_v1"
     assert defaults["model_name"] == "Qwen/Qwen3-30B-A3B-Instruct-2507"
     assert defaults["openrouter_model"] == "openai/gpt-5.4-mini"
-    assert defaults["stage1_train_examples"] == 64
-    assert defaults["stage1_eval_examples"] == 8
-    assert defaults["stage2_train_examples"] == 48
-    assert defaults["stage2_eval_examples"] == 8
-    assert defaults["tracked_instruction_block_path"] == ""
+    assert defaults["hybrid_total_batches"] == 20
+    assert defaults["hybrid_batch_size"] == 16
+    assert defaults["hybrid_group_size"] == 4
+    assert defaults["hybrid_eval_examples_per_environment"] == 4
+    assert defaults["save_every"] == 5
+    assert defaults["eval_every"] == 2
 
 
 def test_launch_once_is_idempotent_per_button_event(tmp_path) -> None:

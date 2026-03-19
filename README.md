@@ -22,15 +22,18 @@ The notebook does not talk to the Diplomacy environment directly. It does not ho
 ## Architecture
 
 - `scripts/train_tinker_grpo_curriculum.py`: CLI entrypoint.
-- `tinker_training/curriculum.py`: curriculum config, stage orchestration, checkpoint manifests, one shared Tinker training run.
+- `tinker_training/curriculum.py`: hybrid curriculum config, checkpoint manifests, one shared Tinker training run.
 - `tinker_training/diplomacy_adapter.py`: Diplomacy environment adapter and grouped rollout builder.
 - `tinker_training/rollout_backends.py`: Modal rollout execution layer.
 - `notebooks/tinker_grpo_modal.py`: marimo UI.
 
-The curriculum stages are:
+The hybrid environment mix includes:
 
-- `stage1_tool_accuracy`
-- `stage2_full_press`
+- `tool_accuracy`
+- `target_execution`
+- `supported_target`
+- `cooperative_press`
+- `full_press`
 
 ## Credentials
 
@@ -143,23 +146,16 @@ Core controls:
 - `Initial checkpoint`: warm-start checkpoint if you are not resuming from the existing run folder.
 - `Save every` / `Eval every`: cadence in global curriculum batches.
 - `Rich-log groups per batch`: how many groups get HTML/logtree output.
-- `LoRA rank`: shared adapter rank for the full curriculum. Stage 1 and stage 2 use the same LoRA rank.
+- `Prompt family`: environment-specific tracked-policy prompts under `prompts/gepa-full-press/`.
+- `Hybrid total batches`: how long to run the mixed easy-to-hard schedule.
+- `Learning rate`: one global learning rate for the whole hybrid run.
+- `LoRA rank`: shared adapter rank for the full hybrid curriculum.
 
-Stage controls:
+Hybrid controls:
 
-- `train examples`: number of sampled sessions used for training in that stage.
-- `eval examples`: number of sampled sessions used for evaluation in that stage.
-- `batch size`: number of prompt groups per optimizer batch.
-- `group size`: number of trajectories sampled per prompt group.
-- `max output tokens`: per-trajectory generation cap.
-- `max turns`: environment turn cap.
-- `train seed`: dataset seed.
-- `learning rate`: stage-specific learning rate.
-
-The default stage sizes are intentionally conservative to control spend:
-
-- stage 1 defaults to `64` train examples and `8` eval examples
-- stage 2 defaults to `48` train examples and `8` eval examples
+- the environment schedule is fixed in code and gradually shifts from easy-heavy to full-press-heavy
+- the notebook shows the phase schedule and per-environment turn limits as read-only summaries
+- evaluation is split by environment so W&B can show which task families are improving
 
 Modal controls:
 
@@ -175,9 +171,8 @@ Each run writes to:
 
 Important files:
 
-- `curriculum_manifest.json`: run metadata, per-stage checkpoint paths, backend stats, and overall status.
-- `stage1_tool_accuracy/`: stage 1 config snapshot, metrics, traces, and checkpoints.
-- `stage2_full_press/`: stage 2 config snapshot, metrics, traces, and checkpoints.
+- `curriculum_manifest.json`: run metadata, hybrid phase status, checkpoint paths, backend stats, and overall status.
+- `hybrid_v1/`: hybrid config snapshot, metrics, traces, and checkpoints.
 
 ## CLI Parameters
 
@@ -216,8 +211,8 @@ To view the run:
 
 What to look for first:
 
-- training progress across batches and whether the run finishes both curriculum stages
-- reward and rubric metrics, especially whether stage 1 becomes mechanically reliable before stage 2 improves outcome-sensitive behavior
+- training progress across batches and whether the run survives all hybrid phases
+- reward and rubric metrics by environment, especially whether easier environments improve first and `full_press` gets non-zero signal later
 - evaluation cadence and checkpoint cadence, to confirm saves and evals are happening when expected
 - spikes in rollout failures, invalid tool use, or other regressions that suggest environment or reward issues rather than model improvement
 
@@ -226,8 +221,8 @@ What to look for first:
 To make the model better:
 
 - improve reward design so the policy gets credit for the behaviors you actually want
-- tune stage sizes, batch sizes, group sizes, and learning rates once the basic run is stable
-- review `curriculum_manifest.json`, stage checkpoints, and traces to find where the policy is failing
+- tune the hybrid schedule, batch size, group size, and learning rate once the basic run is stable
+- review `curriculum_manifest.json`, hybrid checkpoints, and traces to find where the policy is failing
 
 To improve environment design:
 
@@ -239,4 +234,4 @@ To add more environments to mix into curriculum training:
 
 - add a new environment that teaches one distinct skill, such as persuasion, longer-horizon coordination, or recovery from bad board states
 - keep the environment adapter thin so new environments plug into the same Tinker training loop
-- add the environment as another curriculum stage once its reward and termination logic are stable
+- add the environment to the hybrid mixture once its reward and termination logic are stable
