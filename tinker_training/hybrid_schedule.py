@@ -32,7 +32,7 @@ HYBRID_MAX_TRAJECTORY_TOKENS_BY_ENVIRONMENT: dict[EnvironmentKind, int] = {
 }
 
 HYBRID_TOTAL_BATCHES_DEFAULT = 80
-HYBRID_UI_TOTAL_BATCHES_DEFAULT = 20
+HYBRID_UI_TOTAL_BATCHES_DEFAULT = 16
 HYBRID_BATCH_SIZE = 16
 HYBRID_GROUP_SIZE = 4
 HYBRID_MAX_TOKENS = 384
@@ -88,7 +88,7 @@ HYBRID_PHASE_SCHEDULE: tuple[HybridPhaseSpec, ...] = (
         index=1,
         name="phase_1_warmup_tool_accuracy",
         start_batch=0,
-        end_batch_exclusive=4,
+        end_batch_exclusive=2,
         environment_weights={
             "tool_accuracy": 1.0,
             "target_execution": 0.0,
@@ -100,21 +100,21 @@ HYBRID_PHASE_SCHEDULE: tuple[HybridPhaseSpec, ...] = (
     HybridPhaseSpec(
         index=2,
         name="phase_2_easy_to_hard_bridge",
-        start_batch=4,
-        end_batch_exclusive=20,
+        start_batch=2,
+        end_batch_exclusive=6,
         environment_weights={
-            "tool_accuracy": 0.35,
-            "target_execution": 0.25,
-            "supported_target": 0.20,
-            "cooperative_press": 0.15,
+            "tool_accuracy": 0.40,
+            "target_execution": 0.30,
+            "supported_target": 0.15,
+            "cooperative_press": 0.10,
             "full_press": 0.05,
         },
     ),
     HybridPhaseSpec(
         index=3,
         name="phase_3_balanced_mix",
-        start_batch=20,
-        end_batch_exclusive=40,
+        start_batch=6,
+        end_batch_exclusive=10,
         environment_weights={
             "tool_accuracy": 0.20,
             "target_execution": 0.20,
@@ -126,27 +126,27 @@ HYBRID_PHASE_SCHEDULE: tuple[HybridPhaseSpec, ...] = (
     HybridPhaseSpec(
         index=4,
         name="phase_4_full_press_ramp",
-        start_batch=40,
-        end_batch_exclusive=60,
+        start_batch=10,
+        end_batch_exclusive=14,
         environment_weights={
             "tool_accuracy": 0.10,
             "target_execution": 0.10,
-            "supported_target": 0.20,
+            "supported_target": 0.15,
             "cooperative_press": 0.20,
-            "full_press": 0.40,
+            "full_press": 0.45,
         },
     ),
     HybridPhaseSpec(
         index=5,
         name="phase_5_full_press_tail",
-        start_batch=60,
+        start_batch=14,
         end_batch_exclusive=None,
         environment_weights={
             "tool_accuracy": 0.05,
             "target_execution": 0.05,
             "supported_target": 0.10,
-            "cooperative_press": 0.20,
-            "full_press": 0.60,
+            "cooperative_press": 0.15,
+            "full_press": 0.65,
         },
     ),
 )
@@ -199,4 +199,3 @@ def batch_fraction_metrics(
         f"mix/train_batch_fraction/{environment}": counts.get(environment, 0) / denominator
         for environment in HYBRID_ENVIRONMENTS
     }
-

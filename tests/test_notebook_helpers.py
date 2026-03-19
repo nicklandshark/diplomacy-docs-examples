@@ -12,6 +12,7 @@ from tinker_training.notebook_helpers import (
     preflight_env,
     resolve_manifest_path,
 )
+from tinker_training.hybrid_schedule import environment_weights_for_batch, phase_for_batch
 
 
 class _FakeProcess:
@@ -81,12 +82,28 @@ def test_notebook_defaults_use_reduced_rollout_counts() -> None:
 
     assert defaults["model_name"] == "Qwen/Qwen3-30B-A3B-Instruct-2507"
     assert defaults["openrouter_model"] == "openai/gpt-5.4-mini"
-    assert defaults["hybrid_total_batches"] == 20
+    assert defaults["hybrid_total_batches"] == 16
     assert defaults["hybrid_batch_size"] == 16
     assert defaults["hybrid_group_size"] == 4
     assert defaults["hybrid_eval_examples_per_environment"] == 4
-    assert defaults["save_every"] == 5
-    assert defaults["eval_every"] == 2
+    assert defaults["save_every"] == 8
+    assert defaults["eval_every"] == 4
+
+
+def test_hybrid_schedule_reaches_mixed_phase_quickly_for_ui_defaults() -> None:
+    assert phase_for_batch(0).name == "phase_1_warmup_tool_accuracy"
+    assert phase_for_batch(2).name == "phase_2_easy_to_hard_bridge"
+    assert phase_for_batch(6).name == "phase_3_balanced_mix"
+    assert phase_for_batch(10).name == "phase_4_full_press_ramp"
+    assert phase_for_batch(14).name == "phase_5_full_press_tail"
+
+    assert environment_weights_for_batch(2) == {
+        "tool_accuracy": 0.40,
+        "target_execution": 0.30,
+        "supported_target": 0.15,
+        "cooperative_press": 0.10,
+        "full_press": 0.05,
+    }
 
 
 def test_launch_once_is_idempotent_per_button_event(tmp_path) -> None:
