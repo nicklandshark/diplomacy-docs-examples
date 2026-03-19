@@ -249,6 +249,50 @@ def build_taxonomy_summary(rows: list[SeedResult]) -> dict[str, Any]:
     }
 
 
+def build_pattern_summary(rows: list[SeedResult]) -> dict[str, Any]:
+    if not rows:
+        return {}
+
+    def _rate(predicate: Any) -> float:
+        return mean(1.0 if predicate(row) else 0.0 for row in rows)
+
+    def _submit_count(row: SeedResult) -> int:
+        return sum(record.tools.count("submit_orders") for record in row.turn_records)
+
+    def _narrates(row: SeedResult) -> bool:
+        return any(_first_nonempty_text_before_tool(record.action_text) for record in row.turn_records)
+
+    pattern_rates = {
+        "narration_before_tool_rate": _rate(_narrates),
+        "contact_before_read_rate": _rate(lambda row: _trajectory_signals(row)["contact_before_read"]),
+        "legal_before_submit_rate": _rate(
+            lambda row: (
+                _trajectory_signals(row)["first_read_legal_orders_turn"] is not None
+                and _trajectory_signals(row)["first_submit_orders_turn"] is not None
+                and _trajectory_signals(row)["first_read_legal_orders_turn"]
+                < _trajectory_signals(row)["first_submit_orders_turn"]
+            )
+        ),
+        "finish_after_submit_rate": _rate(lambda row: _trajectory_signals(row)["finish_after_submit"]),
+        "multi_submit_rate": _rate(lambda row: _submit_count(row) > 1),
+        "legal_but_fail_gate_rate": _rate(lambda row: row.relevant_submission > 0.0 and row.gate <= 0.0),
+        "read_conversation_after_legal_before_submit_rate": _rate(
+            lambda row: any(
+                "read_conversation" in record.tools
+                and _trajectory_signals(row)["first_read_legal_orders_turn"] is not None
+                and record.turn_index > _trajectory_signals(row)["first_read_legal_orders_turn"]
+                and (
+                    _trajectory_signals(row)["first_submit_orders_turn"] is None
+                    or record.turn_index < _trajectory_signals(row)["first_submit_orders_turn"]
+                )
+                for record in row.turn_records
+            )
+        ),
+    }
+    pattern_rates["mean_submit_count"] = mean(_submit_count(row) for row in rows)
+    return pattern_rates
+
+
 def build_manual_review(rows: list[SeedResult], *, failed_limit: int = 10, success_limit: int = 5) -> dict[str, Any]:
     failed_rows = sorted(
         [row for row in rows if row.dominant_failure is not None or row.status != "ok"],
@@ -334,6 +378,7 @@ def write_json(path: Path, payload: Any) -> None:
 def review_background_from_taxonomy(
     *,
     baseline_taxonomy: dict[str, Any] | None = None,
+    pattern_summary: dict[str, Any] | None = None,
     extra_lines: list[str] | None = None,
 ) -> str:
     lines = [
@@ -355,6 +400,24 @@ def review_background_from_taxonomy(
             count = counts.get(bucket, 0)
             if count:
                 lines.append(f"- {bucket}: {count}")
+    if pattern_summary:
+        lines.append("Observed trajectory patterns:")
+        if pattern_summary.get("narration_before_tool_rate", 0.0) >= 0.25:
+            lines.append(
+                f"- narration before tool calls is common ({pattern_summary['narration_before_tool_rate']:.0%}); strip it out."
+            )
+        if pattern_summary.get("legal_but_fail_gate_rate", 0.0) >= 0.25:
+            lines.append(
+                f"- many trajectories submit legal orders but still miss the objective ({pattern_summary['legal_but_fail_gate_rate']:.0%}); bias toward the anchor/target order, not merely any legal set."
+            )
+        if pattern_summary.get("multi_submit_rate", 0.0) >= 0.1:
+            lines.append(
+                f"- repeated submit_orders attempts are common ({pattern_summary['multi_submit_rate']:.0%}); after a rejection, rebuild from scratch with exactly one order per orderable unit."
+            )
+        if pattern_summary.get("read_conversation_after_legal_before_submit_rate", 0.0) >= 0.1:
+            lines.append(
+                "- do not re-open conversations after reading legal orders unless the task explicitly requires it; move directly to submission."
+            )
     if extra_lines:
         lines.extend(extra_lines)
     return "\n".join(lines)

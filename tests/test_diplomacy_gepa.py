@@ -6,9 +6,11 @@ from tinker_training.diplomacy_gepa import (
     SeedResult,
     TurnRecord,
     build_manual_review,
+    build_pattern_summary,
     build_taxonomy_summary,
     classify_seed_result,
     get_gepa_train_pool,
+    review_background_from_taxonomy,
     resolve_seed_pool,
     summarize_rows,
 )
@@ -322,3 +324,60 @@ def test_manual_review_backfills_near_miss_successes_when_no_gate_wins() -> None
     ]
     review = build_manual_review(rows, failed_limit=2, success_limit=2)
     assert [entry["seed"] for entry in review["successful"]] == [71, 72]
+
+
+def test_pattern_summary_and_background_include_trace_signals() -> None:
+    legal_but_fail = replace(
+        _row(seed=81, reward=0.85, relevant_submission=1.0, gate=0.0),
+        turn_records=[
+            TurnRecord(
+                turn_index=0,
+                tools=["send_message"],
+                action_text="I will message first <tool_call><function=send_message></function></tool_call>",
+                observation_excerpt="",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+            TurnRecord(
+                turn_index=1,
+                tools=["read_legal_orders"],
+                action_text="<tool_call><function=read_legal_orders></function></tool_call>",
+                observation_excerpt="",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+            TurnRecord(
+                turn_index=2,
+                tools=["submit_orders"],
+                action_text="<tool_call><function=submit_orders></function></tool_call>",
+                observation_excerpt="",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+            TurnRecord(
+                turn_index=3,
+                tools=["submit_orders"],
+                action_text="<tool_call><function=submit_orders></function></tool_call>",
+                observation_excerpt="",
+                reward=0.0,
+                episode_done=True,
+                metrics={},
+            ),
+        ],
+        dominant_failure="gate_fail_after_legal_submission",
+    )
+    patterns = build_pattern_summary([legal_but_fail])
+    assert patterns["narration_before_tool_rate"] == 1.0
+    assert patterns["multi_submit_rate"] == 1.0
+    assert patterns["legal_but_fail_gate_rate"] == 1.0
+
+    background = review_background_from_taxonomy(
+        baseline_taxonomy=build_taxonomy_summary([legal_but_fail]),
+        pattern_summary=patterns,
+    )
+    assert "narration before tool calls is common" in background
+    assert "many trajectories submit legal orders but still miss the objective" in background
+    assert "repeated submit_orders attempts are common" in background

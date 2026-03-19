@@ -48,6 +48,7 @@ from tinker_training.diplomacy_gepa import (
     SeedResult,
     TurnRecord,
     build_manual_review,
+    build_pattern_summary,
     build_taxonomy_summary,
     classify_seed_result,
     get_gepa_train_pool,
@@ -737,7 +738,7 @@ async def evaluate_preset(
     per_seed_timeout_seconds: float,
     resume: bool,
     label: str,
-) -> tuple[list[SeedResult], dict[str, Any], dict[str, Any], dict[str, Any]]:
+) -> tuple[list[SeedResult], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     rows = load_completed_rows(output_dir=output_dir, seeds=seeds) if resume else None
     if rows is None:
         async with ModalPoolEvaluator(
@@ -754,12 +755,14 @@ async def evaluate_preset(
             )
     summary = summarize_rows(rows)
     taxonomy = build_taxonomy_summary(rows)
+    patterns = build_pattern_summary(rows)
     review = build_manual_review(rows)
     write_json(output_dir / "summary.json", summary)
     write_json(output_dir / "taxonomy.json", taxonomy)
+    write_json(output_dir / "patterns.json", patterns)
     write_json(output_dir / "review.json", review)
     save_preset(output_dir / "preset.json", preset)
-    return rows, summary, taxonomy, review
+    return rows, summary, taxonomy, patterns, review
 
 
 def load_completed_rows(*, output_dir: Path, seeds: Sequence[int]) -> list[SeedResult] | None:
@@ -914,7 +917,7 @@ def run_screen_phase(args: argparse.Namespace) -> None:
         config_dir = screen_dir / f"{index:03d}-{screen_preset_slug(preset)}"
         label = f"screen:{index}/{len(presets)}"
         try:
-            _, summary, taxonomy, _ = asyncio.run(
+            _, summary, taxonomy, patterns, _ = asyncio.run(
                 evaluate_preset(
                     preset=preset,
                     seeds=seeds,
@@ -934,9 +937,11 @@ def run_screen_phase(args: argparse.Namespace) -> None:
                 "preset_path": str(config_dir / "preset.json"),
                 "summary_path": str(config_dir / "summary.json"),
                 "taxonomy_path": str(config_dir / "taxonomy.json"),
+                "patterns_path": str(config_dir / "patterns.json"),
                 "rank_key": rank_screen_results(summary, preset.environment),
                 "summary": summary,
                 "taxonomy": taxonomy,
+                "patterns": patterns,
             }
         )
     ranked_entries.sort(key=lambda entry: entry["rank_key"], reverse=True)
@@ -1079,8 +1084,12 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
         default_idle_sleep_seconds=0.5
     )
     baseline_taxonomy_path = run_dir / "latest_taxonomy.json"
+    latest_patterns_path = run_dir / "latest_patterns.json"
     baseline_taxonomy = (
         json.loads(baseline_taxonomy_path.read_text()) if baseline_taxonomy_path.exists() else None
+    )
+    latest_patterns = (
+        json.loads(latest_patterns_path.read_text()) if latest_patterns_path.exists() else None
     )
     evaluator = GEPAPromptEvaluator(
         preset=preset,
@@ -1099,6 +1108,7 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
         )
         background = review_background_from_taxonomy(
             baseline_taxonomy=baseline_taxonomy,
+            pattern_summary=latest_patterns,
             extra_lines=[
                 "Known 27B failure modes to fix if they still appear:",
                 "- compact order formatting like 'A MUN-BOH' instead of 'A MUN - BOH'",
@@ -1143,7 +1153,7 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
 
     baseline_preset = replace(preset, tracked_instruction_block=seed_candidate)
     candidate_preset = replace(preset, tracked_instruction_block=best_candidate)
-    _, baseline_val_summary, baseline_val_taxonomy, _ = asyncio.run(
+    _, baseline_val_summary, baseline_val_taxonomy, baseline_val_patterns, _ = asyncio.run(
         evaluate_preset(
             preset=baseline_preset,
             seeds=val_pool[1],
@@ -1155,7 +1165,7 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
             label=f"round{args.round_index}:baseline_val",
         )
     )
-    _, candidate_train_summary, _, _ = asyncio.run(
+    _, candidate_train_summary, _, candidate_train_patterns, _ = asyncio.run(
         evaluate_preset(
             preset=candidate_preset,
             seeds=train_pool[1],
@@ -1167,7 +1177,7 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
             label=f"round{args.round_index}:candidate_train",
         )
     )
-    _, candidate_val_summary, candidate_val_taxonomy, _ = asyncio.run(
+    _, candidate_val_summary, candidate_val_taxonomy, candidate_val_patterns, _ = asyncio.run(
         evaluate_preset(
             preset=candidate_preset,
             seeds=val_pool[1],
@@ -1185,8 +1195,9 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
     )
     confirm_summary: dict[str, Any] | None = None
     confirm_taxonomy: dict[str, Any] | None = None
+    confirm_patterns: dict[str, Any] | None = None
     if decision["promoted"]:
-        _, confirm_summary, confirm_taxonomy, _ = asyncio.run(
+        _, confirm_summary, confirm_taxonomy, confirm_patterns, _ = asyncio.run(
             evaluate_preset(
                 preset=candidate_preset,
                 seeds=confirm_pool[1],
@@ -1201,10 +1212,12 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
         decision["confirmed"] = True
         decision["confirm_summary_path"] = str(round_dir / "confirm" / "summary.json")
         write_json(run_dir / "latest_taxonomy.json", confirm_taxonomy or candidate_val_taxonomy)
+        write_json(run_dir / "latest_patterns.json", confirm_patterns or candidate_val_patterns)
         save_preset(run_dir / "latest_promoted_preset.json", candidate_preset)
     else:
         decision["confirmed"] = False
         write_json(run_dir / "latest_taxonomy.json", candidate_val_taxonomy)
+        write_json(run_dir / "latest_patterns.json", candidate_val_patterns)
 
     (round_dir / "seed_candidate.txt").write_text(seed_candidate + "\n")
     (round_dir / "best_candidate.txt").write_text(best_candidate + "\n")
@@ -1221,9 +1234,13 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
             "candidate_train_summary": candidate_train_summary,
             "candidate_val_summary": candidate_val_summary,
             "baseline_val_taxonomy": baseline_val_taxonomy,
+            "baseline_val_patterns": baseline_val_patterns,
+            "candidate_train_patterns": candidate_train_patterns,
             "candidate_val_taxonomy": candidate_val_taxonomy,
+            "candidate_val_patterns": candidate_val_patterns,
             "confirm_summary": confirm_summary,
             "confirm_taxonomy": confirm_taxonomy,
+            "confirm_patterns": confirm_patterns,
             "deltas": compare_summaries(
                 baseline_summary=baseline_val_summary,
                 candidate_summary=candidate_val_summary,
@@ -1247,7 +1264,7 @@ def run_report_phase(args: argparse.Namespace) -> None:
     run_dir = Path(args.run_dir)
     _, seeds = resolve_seed_pool(args.seed_pool)
     report_dir = run_dir / "report" / (args.tag or slugify(f"{preset.model_name}-{args.seed_pool}"))
-    _, summary, taxonomy, review = asyncio.run(
+    _, summary, taxonomy, patterns, review = asyncio.run(
         evaluate_preset(
             preset=preset,
             seeds=seeds,
@@ -1259,10 +1276,11 @@ def run_report_phase(args: argparse.Namespace) -> None:
             label="report",
         )
     )
-    write_json(report_dir / "report.json", {"summary": summary, "taxonomy": taxonomy, "review": review})
+    write_json(report_dir / "report.json", {"summary": summary, "taxonomy": taxonomy, "patterns": patterns, "review": review})
     write_json(run_dir / "latest_taxonomy.json", taxonomy)
+    write_json(run_dir / "latest_patterns.json", patterns)
     write_json(run_dir / "latest_manual_review.json", review)
-    print(json.dumps({"summary": summary, "taxonomy": taxonomy}, indent=2))
+    print(json.dumps({"summary": summary, "taxonomy": taxonomy, "patterns": patterns}, indent=2))
 
 
 def run_compare_phase(args: argparse.Namespace) -> None:
@@ -1273,7 +1291,7 @@ def run_compare_phase(args: argparse.Namespace) -> None:
     preset_b = load_preset(Path(args.preset_b_path))
     _, seeds = resolve_seed_pool(args.seed_pool)
     compare_dir = Path(args.run_dir) / "compare" / (args.tag or slugify(f"{preset_a.model_name}-vs-{preset_b.model_name}-{args.seed_pool}"))
-    _, summary_a, taxonomy_a, review_a = asyncio.run(
+    _, summary_a, taxonomy_a, patterns_a, review_a = asyncio.run(
         evaluate_preset(
             preset=preset_a,
             seeds=seeds,
@@ -1285,7 +1303,7 @@ def run_compare_phase(args: argparse.Namespace) -> None:
             label="compare:a",
         )
     )
-    _, summary_b, taxonomy_b, review_b = asyncio.run(
+    _, summary_b, taxonomy_b, patterns_b, review_b = asyncio.run(
         evaluate_preset(
             preset=preset_b,
             seeds=seeds,
@@ -1298,8 +1316,8 @@ def run_compare_phase(args: argparse.Namespace) -> None:
         )
     )
     comparison = {
-        "candidate_a": {"preset_path": args.preset_a_path, "summary": summary_a, "taxonomy": taxonomy_a, "review": review_a},
-        "candidate_b": {"preset_path": args.preset_b_path, "summary": summary_b, "taxonomy": taxonomy_b, "review": review_b},
+        "candidate_a": {"preset_path": args.preset_a_path, "summary": summary_a, "taxonomy": taxonomy_a, "patterns": patterns_a, "review": review_a},
+        "candidate_b": {"preset_path": args.preset_b_path, "summary": summary_b, "taxonomy": taxonomy_b, "patterns": patterns_b, "review": review_b},
         "delta_b_minus_a": compare_summaries(baseline_summary=summary_a, candidate_summary=summary_b),
     }
     write_json(compare_dir / "comparison.json", comparison)
