@@ -47,6 +47,10 @@ _NO_REPLY_PATTERNS = (
     "no unread messages",
     "no response",
     "awaiting reply",
+    "only my message",
+    "hasn't replied",
+    "has not replied",
+    "still only my message",
 )
 _PARSE_MARKUP_PATTERNS = (
     "parse",
@@ -350,8 +354,10 @@ def _has_compact_order_text(turn_records: list[TurnRecord]) -> bool:
 def _looks_like_counterpart_no_reply(result: SeedResult) -> bool:
     if result.read_conversation_count < 2 or result.wait_count < 1:
         return False
-    snippets = " ".join(record.observation_excerpt.lower() for record in result.turn_records)
-    return any(pattern in snippets for pattern in _NO_REPLY_PATTERNS)
+    searchable = " ".join(
+        f"{record.observation_excerpt.lower()} {record.action_text.lower()}" for record in result.turn_records
+    )
+    return any(pattern in searchable for pattern in _NO_REPLY_PATTERNS)
 
 
 def _review_entry(row: SeedResult) -> dict[str, Any]:

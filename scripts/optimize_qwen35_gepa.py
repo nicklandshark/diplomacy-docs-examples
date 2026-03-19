@@ -374,7 +374,7 @@ class ModalPoolEvaluator:
             action_text = self.tokenizer.decode(transition.ac.tokens, skip_special_tokens=False)
             decoded_actions.append(action_text)
             tool_names = extract_tool_names(action_text)
-            observation_excerpt = model_input_text(transition.ob)[:500]
+            observation_excerpt = render_observation_excerpt(transition.ob, self.tokenizer)[:500]
             observation_snippets.append(observation_excerpt.lower())
             metrics = {
                 key: float(value)
@@ -473,6 +473,38 @@ def model_input_text(model_input: Any) -> str:
     return str(model_input)
 
 
+def render_observation_excerpt(model_input: Any, tokenizer: Any) -> str:
+    if not hasattr(model_input, "model_dump"):
+        return str(model_input)
+    payload = model_input.model_dump(mode="python")
+    chunks = payload.get("chunks", [])
+    rendered_chunks: list[str] = []
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            rendered_chunks.append(str(chunk))
+            continue
+        tokens = chunk.get("tokens")
+        if isinstance(tokens, list) and tokens:
+            try:
+                rendered_chunks.append(tokenizer.decode(tokens, skip_special_tokens=False))
+                continue
+            except Exception:
+                pass
+        if "text" in chunk:
+            rendered_chunks.append(str(chunk["text"]))
+            continue
+        if "content" in chunk:
+            rendered_chunks.append(str(chunk["content"]))
+            continue
+        rendered_chunks.append(json.dumps(chunk, ensure_ascii=False))
+    text = "".join(rendered_chunks).strip()
+    if not text:
+        return json.dumps(payload, ensure_ascii=False)
+    # Keep the tail because the latest tool result is far more useful than the
+    # repeated system/tool schema preamble at the front of the prompt.
+    return text[-2000:]
+
+
 def infer_stop_condition(
     *,
     turn_records: Sequence[TurnRecord],
@@ -481,6 +513,8 @@ def infer_stop_condition(
 ) -> str | None:
     if merged_metrics.get("tool/finish_called", 0.0) > 0.0:
         return "finish_called"
+    if merged_metrics.get("episode/max_turns_reached", 0.0) > 0.0:
+        return "max_turns_reached"
     if turn_records and turn_records[-1].episode_done:
         return "episode_done"
     if len(turn_records) >= max_turns:

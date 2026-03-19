@@ -31,6 +31,7 @@ def _row(
     failure_kind: str | None = None,
     failure_message: str | None = None,
     observation_excerpt: str = "",
+    action_text: str = "ok",
 ) -> SeedResult:
     row = SeedResult(
         seed=seed,
@@ -56,7 +57,7 @@ def _row(
             TurnRecord(
                 turn_index=0,
                 tools=["wait"] if wait_count else ["send_message"],
-                action_text="A MUN-BOH" if compact_order_error else "ok",
+                action_text="A MUN-BOH" if compact_order_error else action_text,
                 observation_excerpt=observation_excerpt,
                 reward=reward,
                 episode_done=False,
@@ -95,7 +96,7 @@ def test_classify_failure_buckets() -> None:
         seed=23,
         wait_count=2,
         read_conversation_count=2,
-        observation_excerpt="No new messages from counterparts.",
+        action_text="I see only my message so far and Germany hasn't replied.",
     )
     assert classify_seed_result(no_reply) == "counterpart_no_reply"
 
