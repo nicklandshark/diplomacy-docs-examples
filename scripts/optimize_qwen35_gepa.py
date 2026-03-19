@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -275,6 +276,45 @@ def load_metric_cache(metric_dir: Path) -> tuple[int, dict[tuple[str, int], Seed
         cache[(candidate_hash, row.seed)] = row
         count += 1
     return count, cache
+
+
+def scrub_transient_metric_errors(metric_dir: Path) -> int:
+    metric_calls_path = metric_dir / "metric_calls.jsonl"
+    if not metric_calls_path.exists():
+        return 0
+    rows_dir = metric_dir / "rows"
+    kept_records: list[dict[str, Any]] = []
+    removed = 0
+    for raw_line in metric_calls_path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        payload = json.loads(line)
+        row_path = rows_dir / (
+            f"{int(payload['call_index']):05d}-{payload['candidate_hash']}-seed_{int(payload['seed']):04d}.json"
+        )
+        if row_path.exists():
+            row_payload = json.loads(row_path.read_text())
+            row = SeedResult.from_json(row_payload["seed_result"])
+        else:
+            row = SeedResult(
+                seed=int(payload["seed"]),
+                status=str(payload.get("status", "error")),
+                execution_backend="tinker_modal",
+                score=float(payload.get("score", -1.0)),
+                reward=float(payload.get("reward", -1.0)),
+                dominant_failure=payload.get("dominant_failure"),
+            )
+        if is_transient_seed_error(row):
+            removed += 1
+            if row_path.exists():
+                row_path.unlink()
+            continue
+        kept_records.append(payload)
+    metric_calls_path.write_text(
+        "\n".join(json.dumps(record) for record in kept_records) + ("\n" if kept_records else "")
+    )
+    return removed
 
 
 def helper_api_key_from_env(env_var: str) -> str:
@@ -1148,6 +1188,14 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
     if args.resume and decision_path.exists():
         print(decision_path.read_text())
         return
+    transient_removed = 0
+    if args.resume:
+        transient_removed = scrub_transient_metric_errors(round_dir / "metric_calls")
+        if transient_removed:
+            stale_gepa_dir = round_dir / "gepa_run"
+            if stale_gepa_dir.exists():
+                stale_backup = round_dir / f"gepa_run_stale_{int(time.time())}"
+                shutil.move(str(stale_gepa_dir), stale_backup)
 
     seed_candidate = preset.tracked_instruction_block or get_default_tracked_instruction_block(
         default_idle_sleep_seconds=0.5
@@ -1329,6 +1377,7 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
                 "helper_api_key_env_var": preset.helper_api_key_env_var,
             },
             "max_metric_calls": args.max_metric_calls,
+            "transient_metric_rows_removed": transient_removed,
         },
     )
     write_json(decision_path, decision)

@@ -13,6 +13,7 @@ from scripts.optimize_qwen35_gepa import (
     repair_saved_screen,
     record_metric_call,
     resolve_reflection_lm,
+    scrub_transient_metric_errors,
 )
 from tinker_training.diplomacy_gepa import ExperimentPreset, SeedResult
 
@@ -284,6 +285,72 @@ def test_load_metric_cache_skips_transient_conflict_errors(tmp_path) -> None:
     assert call_index == 0
     assert cache == {}
     assert is_transient_seed_error(transient) is True
+
+
+def test_scrub_transient_metric_errors_removes_conflict_rows(tmp_path) -> None:
+    transient = SeedResult(
+        seed=87,
+        status="error",
+        execution_backend="tinker_modal",
+        score=-1.0,
+        reward=-1.0,
+        gate=0.0,
+        transition_target=0.0,
+        relevant_submission=0.0,
+        rejected_tool_calls=0.0,
+        wait_count=0,
+        read_conversation_count=0,
+        compact_order_error=False,
+        has_think_close=False,
+        turns=0,
+        max_turns=10,
+        wall_time_seconds=1.0,
+        failure_kind="ConflictError",
+        failure_message="The app is stopped or disabled",
+        dominant_failure="other",
+    )
+    stable = SeedResult(
+        seed=88,
+        status="ok",
+        execution_backend="tinker_modal",
+        score=0.25,
+        reward=0.0,
+        gate=0.0,
+        transition_target=0.0,
+        relevant_submission=1.0,
+        rejected_tool_calls=0.0,
+        wait_count=0,
+        read_conversation_count=1,
+        compact_order_error=False,
+        has_think_close=False,
+        turns=5,
+        max_turns=10,
+        wall_time_seconds=12.0,
+        dominant_failure="gate_fail_after_legal_submission",
+    )
+    record_metric_call(
+        metric_dir=tmp_path,
+        call_index=1,
+        candidate="candidate-a",
+        row=transient,
+    )
+    record_metric_call(
+        metric_dir=tmp_path,
+        call_index=2,
+        candidate="candidate-a",
+        row=stable,
+    )
+
+    removed = scrub_transient_metric_errors(tmp_path)
+
+    assert removed == 1
+    remaining_lines = (tmp_path / "metric_calls.jsonl").read_text().strip().splitlines()
+    assert len(remaining_lines) == 1
+    payload = json.loads(remaining_lines[0])
+    assert payload["seed"] == 88
+    remaining_rows = sorted((tmp_path / "rows").glob("*.json"))
+    assert len(remaining_rows) == 1
+    assert "seed_0088" in remaining_rows[0].name
 
 
 def test_gepa_prompt_evaluator_uses_cached_metric_without_starting_runner(monkeypatch, tmp_path) -> None:
