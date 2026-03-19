@@ -256,11 +256,36 @@ def record_metric_call(
     )
 
 
+def load_metric_cache(metric_dir: Path) -> tuple[int, dict[tuple[str, int], SeedResult]]:
+    rows_dir = metric_dir / "rows"
+    if not rows_dir.exists():
+        return 0, {}
+    cache: dict[tuple[str, int], SeedResult] = {}
+    count = 0
+    for artifact_path in sorted(rows_dir.glob("*.json")):
+        payload = json.loads(artifact_path.read_text())
+        candidate_hash = str(payload["candidate_hash"])
+        row = SeedResult.from_json(payload["seed_result"])
+        if is_transient_seed_error(row):
+            continue
+        cache[(candidate_hash, row.seed)] = row
+        count += 1
+    return count, cache
+
+
 def helper_api_key_from_env(env_var: str) -> str:
     api_key = os.environ.get(env_var)
     if api_key:
         return api_key
     raise RuntimeError(f"{env_var} must be set.")
+
+
+def is_transient_seed_error(row: SeedResult) -> bool:
+    if row.status != "error":
+        return False
+    failure_kind = (row.failure_kind or "").lower()
+    failure_message = (row.failure_message or "").lower()
+    return failure_kind == "conflicterror" and "app is stopped or disabled" in failure_message
 
 
 def build_openai_compatible_lm(
@@ -407,7 +432,9 @@ class ModalPoolEvaluator:
         resume: bool,
     ) -> SeedResult:
         if resume and artifact_path.exists():
-            return load_seed_result(artifact_path)
+            cached_row = load_seed_result(artifact_path)
+            if not is_transient_seed_error(cached_row):
+                return cached_row
 
         started_at = time.time()
         request = TrajectoryRolloutRequest(
@@ -429,33 +456,43 @@ class ModalPoolEvaluator:
             tracked_instruction_block=self.preset.tracked_instruction_block,
         )
 
-        try:
-            result = await self.runner.run_trajectory(request)
-        except Exception as exc:
-            row = SeedResult(
-                seed=seed,
-                status="error",
-                execution_backend="tinker_modal",
-                score=-1.0,
-                reward=-1.0,
-                gate=0.0,
-                transition_target=0.0,
-                relevant_submission=0.0,
-                rejected_tool_calls=0.0,
-                wait_count=0,
-                read_conversation_count=0,
-                compact_order_error=False,
-                has_think_close=False,
-                turns=0,
-                max_turns=self.preset.max_turns,
-                wall_time_seconds=time.time() - started_at,
-                failure_kind=type(exc).__name__,
-                failure_message=str(exc),
-                artifact_path=str(artifact_path),
-            )
-            row = replace(row, dominant_failure=classify_seed_result(row))
-            save_seed_result(artifact_path, row)
-            return row
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                result = await self.runner.run_trajectory(request)
+                break
+            except Exception as exc:  # pragma: no cover - exercised through SeedResult path tests
+                last_exc = exc
+                failure_row = SeedResult(
+                    seed=seed,
+                    status="error",
+                    execution_backend="tinker_modal",
+                    score=-1.0,
+                    reward=-1.0,
+                    gate=0.0,
+                    transition_target=0.0,
+                    relevant_submission=0.0,
+                    rejected_tool_calls=0.0,
+                    wait_count=0,
+                    read_conversation_count=0,
+                    compact_order_error=False,
+                    has_think_close=False,
+                    turns=0,
+                    max_turns=self.preset.max_turns,
+                    wall_time_seconds=time.time() - started_at,
+                    failure_kind=type(exc).__name__,
+                    failure_message=str(exc),
+                    artifact_path=str(artifact_path),
+                )
+                if attempt == 0 and is_transient_seed_error(failure_row):
+                    await self.runner.aclose()
+                    await self.runner.start()
+                    continue
+                row = replace(failure_row, dominant_failure=classify_seed_result(failure_row))
+                save_seed_result(artifact_path, row)
+                return row
+        else:  # pragma: no cover - defensive, loop always returns or breaks
+            raise RuntimeError(f"Unreachable retry loop state for seed {seed}: {last_exc}")
 
         row = self._result_to_seed_result(
             seed=seed,
@@ -913,22 +950,38 @@ class GEPAPromptEvaluator:
         self.preset = preset
         self.metric_dir = metric_dir
         self._call_index = 0
+        self._metric_cache: dict[tuple[str, int], SeedResult] = {}
+        if self.metric_dir is not None:
+            self._call_index, self._metric_cache = load_metric_cache(self.metric_dir)
         self._async_runner = asyncio.Runner()
         self._evaluator = ModalPoolEvaluator(
             preset=preset,
             app_name=app_name,
             per_seed_timeout_seconds=per_seed_timeout_seconds,
         )
+        self._runner_started = False
+
+    def _ensure_runner_started(self) -> None:
+        if self._runner_started:
+            return
         self._async_runner.run(self._evaluator.runner.start())
+        self._runner_started = True
 
     def close(self) -> None:
         try:
-            self._async_runner.run(self._evaluator.runner.aclose())
+            if self._runner_started:
+                self._async_runner.run(self._evaluator.runner.aclose())
         finally:
             self._async_runner.close()
 
     def __call__(self, candidate: str, example: dict[str, Any]) -> tuple[float, dict[str, Any]]:
-        row = self._async_runner.run(self._evaluate_candidate(candidate, int(example["seed"])))
+        seed = int(example["seed"])
+        candidate_hash = prompt_fingerprint(candidate)
+        cached_row = self._metric_cache.get((candidate_hash, seed))
+        if cached_row is not None:
+            return cached_row.score, cached_row.to_json()
+        self._ensure_runner_started()
+        row = self._async_runner.run(self._evaluate_candidate(candidate, seed))
         if self.metric_dir is not None:
             self._call_index += 1
             record_metric_call(
@@ -937,6 +990,7 @@ class GEPAPromptEvaluator:
                 candidate=candidate,
                 row=row,
             )
+            self._metric_cache[(candidate_hash, seed)] = row
         return row.score, row.to_json()
 
     async def _evaluate_candidate(self, candidate: str, seed: int) -> SeedResult:

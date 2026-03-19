@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import json
 
-from scripts.optimize_qwen35_gepa import load_completed_rows, record_metric_call, resolve_reflection_lm
-from tinker_training.diplomacy_gepa import SeedResult
+from scripts.optimize_qwen35_gepa import (
+    GEPAPromptEvaluator,
+    is_transient_seed_error,
+    load_completed_rows,
+    load_metric_cache,
+    record_metric_call,
+    resolve_reflection_lm,
+)
+from tinker_training.diplomacy_gepa import ExperimentPreset, SeedResult
 
 
 class _FakeMessage:
@@ -195,3 +202,142 @@ def test_load_completed_rows_requires_all_seed_artifacts(tmp_path) -> None:
     assert loaded is not None
     assert [row.seed for row in loaded] == [87, 88]
     assert loaded[1].reward == 1.0
+
+
+def test_load_metric_cache_restores_candidate_seed_entries(tmp_path) -> None:
+    row = SeedResult(
+        seed=87,
+        status="ok",
+        execution_backend="tinker_modal",
+        score=0.25,
+        reward=0.0,
+        gate=0.0,
+        transition_target=0.0,
+        relevant_submission=1.0,
+        rejected_tool_calls=0.0,
+        wait_count=0,
+        read_conversation_count=1,
+        compact_order_error=False,
+        has_think_close=False,
+        turns=5,
+        max_turns=10,
+        wall_time_seconds=12.0,
+        dominant_failure="gate_fail_after_legal_submission",
+    )
+    record_metric_call(
+        metric_dir=tmp_path,
+        call_index=3,
+        candidate="Use tools directly.",
+        row=row,
+    )
+    call_index, cache = load_metric_cache(tmp_path)
+    assert call_index == 1
+    assert len(cache) == 1
+    cached_row = next(iter(cache.values()))
+    assert cached_row.seed == 87
+    assert cached_row.score == 0.25
+
+
+def test_load_metric_cache_skips_transient_conflict_errors(tmp_path) -> None:
+    transient = SeedResult(
+        seed=87,
+        status="error",
+        execution_backend="tinker_modal",
+        score=-1.0,
+        reward=-1.0,
+        gate=0.0,
+        transition_target=0.0,
+        relevant_submission=0.0,
+        rejected_tool_calls=0.0,
+        wait_count=0,
+        read_conversation_count=0,
+        compact_order_error=False,
+        has_think_close=False,
+        turns=0,
+        max_turns=10,
+        wall_time_seconds=1.0,
+        failure_kind="ConflictError",
+        failure_message="The app is stopped or disabled",
+        dominant_failure="other",
+    )
+    record_metric_call(
+        metric_dir=tmp_path,
+        call_index=1,
+        candidate="Use tools directly.",
+        row=transient,
+    )
+
+    call_index, cache = load_metric_cache(tmp_path)
+    assert call_index == 0
+    assert cache == {}
+    assert is_transient_seed_error(transient) is True
+
+
+def test_gepa_prompt_evaluator_uses_cached_metric_without_starting_runner(monkeypatch, tmp_path) -> None:
+    row = SeedResult(
+        seed=87,
+        status="ok",
+        execution_backend="tinker_modal",
+        score=0.25,
+        reward=0.0,
+        gate=0.0,
+        transition_target=0.0,
+        relevant_submission=1.0,
+        rejected_tool_calls=0.0,
+        wait_count=0,
+        read_conversation_count=1,
+        compact_order_error=False,
+        has_think_close=False,
+        turns=5,
+        max_turns=10,
+        wall_time_seconds=12.0,
+        dominant_failure="gate_fail_after_legal_submission",
+    )
+    candidate = "Use tools directly."
+    record_metric_call(
+        metric_dir=tmp_path,
+        call_index=1,
+        candidate=candidate,
+        row=row,
+    )
+
+    started = {"value": False}
+
+    class _FakeRunner:
+        async def start(self) -> None:
+            started["value"] = True
+
+        async def aclose(self) -> None:
+            return None
+
+    class _FakeModalPoolEvaluator:
+        def __init__(self, *, preset, app_name, per_seed_timeout_seconds) -> None:
+            self.runner = _FakeRunner()
+
+    monkeypatch.setattr("scripts.optimize_qwen35_gepa.ModalPoolEvaluator", _FakeModalPoolEvaluator)
+    preset = ExperimentPreset(
+        model_name="Qwen/Qwen3.5-27B",
+        environment="full_press",
+        renderer_name="qwen3_5_disable_thinking",
+        disable_thinking=True,
+        temperature=1.0,
+        max_turns=10,
+        actor_max_turns=6,
+        session_timeout_seconds=120.0,
+        max_tokens=512,
+        tracked_instruction_block=candidate,
+    )
+    evaluator = GEPAPromptEvaluator(
+        preset=preset,
+        app_name="test-gepa",
+        per_seed_timeout_seconds=180.0,
+        metric_dir=tmp_path,
+    )
+    try:
+        score, payload = evaluator(candidate, {"seed": 87})
+    finally:
+        evaluator.close()
+
+    assert score == 0.25
+    assert payload["seed"] == 87
+    assert started["value"] is False
