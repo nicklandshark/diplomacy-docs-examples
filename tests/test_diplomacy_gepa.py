@@ -143,8 +143,11 @@ def test_summary_taxonomy_and_review_outputs() -> None:
 
     summary = summarize_rows([success, failed])
     assert summary["seed_count"] == 2
+    assert summary["row_count"] == 2
     assert summary["success_rate"] == 0.5
     assert summary["wait_loop_rate"] == 0.5
+    assert summary["dominant_failure_type"] == "wait_loop"
+    assert summary["failure_counts"]["wait_loop"] == 1
 
     taxonomy = build_taxonomy_summary([success, failed])
     assert taxonomy["counts"]["wait_loop"] == 1

@@ -191,13 +191,22 @@ def summarize_rows(rows: list[SeedResult]) -> dict[str, Any]:
         return {}
     ok_rows = [row for row in rows if row.status == "ok"]
     failed_rows = [row for row in rows if row.status != "ok"]
+    failure_counts = {bucket: 0 for bucket in _all_failure_buckets()}
     taxonomy_rates: dict[str, float] = {}
     for bucket in _all_failure_buckets():
+        failure_counts[bucket] = sum(1 for row in rows if row.dominant_failure == bucket)
         taxonomy_rates[f"{bucket}_rate"] = mean(
             1.0 if row.dominant_failure == bucket else 0.0 for row in rows
         )
+    dominant_failure_type = None
+    if any(failure_counts.values()):
+        dominant_failure_type = max(
+            failure_counts.items(),
+            key=lambda item: (item[1], item[0]),
+        )[0]
     return {
         "seed_count": len(rows),
+        "row_count": len(rows),
         "ok_count": len(ok_rows),
         "error_count": len(failed_rows),
         "mean_score": mean(row.score for row in rows),
@@ -215,6 +224,8 @@ def summarize_rows(rows: list[SeedResult]) -> dict[str, Any]:
         "mean_prompt_tokens": mean(row.prompt_tokens for row in rows),
         "mean_completion_tokens": mean(row.completion_tokens for row in rows),
         "success_rate": mean(1.0 if row.reward >= 1.0 else 0.0 for row in rows),
+        "dominant_failure_type": dominant_failure_type,
+        "failure_counts": failure_counts,
         **taxonomy_rates,
     }
 
