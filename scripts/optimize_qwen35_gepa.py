@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import itertools
 import json
 import math
@@ -200,6 +201,23 @@ def slugify(value: str) -> str:
     lowered = value.lower()
     lowered = re.sub(r"[^a-z0-9]+", "-", lowered)
     return lowered.strip("-") or "value"
+
+
+def prompt_fingerprint(prompt: str | None) -> str:
+    if not prompt:
+        return "baseline"
+    digest = hashlib.sha1(prompt.encode("utf-8")).hexdigest()
+    return digest[:8]
+
+
+def screen_preset_slug(preset: ExperimentPreset) -> str:
+    return (
+        f"{slugify(preset.renderer_name)}"
+        f"-t{preset.temperature}"
+        f"-m{preset.max_turns}"
+        f"-a{preset.actor_max_turns}"
+        f"-p{prompt_fingerprint(preset.tracked_instruction_block)}"
+    )
 
 
 class ModalPoolEvaluator:
@@ -583,9 +601,9 @@ def make_screen_presets(args: argparse.Namespace) -> list[ExperimentPreset]:
         if args.preset_paths
         else [build_default_preset(args)]
     )
-    prompt_candidates: list[Path | None] = (
-        [Path(path) for path in args.prompt_candidate_paths] if args.prompt_candidate_paths else [None]
-    )
+    prompt_candidates: list[Path | None] = [None]
+    if args.prompt_candidate_paths:
+        prompt_candidates.extend(Path(path) for path in args.prompt_candidate_paths)
     temperatures = parse_float_options(args.temperatures, [args.temperature])
     max_turn_options = parse_int_options(args.max_turns_options, [args.max_turns])
     actor_max_turn_options = parse_int_options(args.actor_max_turns_options, [args.actor_max_turns])
@@ -713,7 +731,7 @@ def run_screen_phase(args: argparse.Namespace) -> None:
     presets = make_screen_presets(args)
     ranked_entries: list[dict[str, Any]] = []
     for index, preset in enumerate(presets, start=1):
-        config_dir = screen_dir / f"{index:03d}-{slugify(preset.renderer_name)}-t{preset.temperature}-m{preset.max_turns}-a{preset.actor_max_turns}"
+        config_dir = screen_dir / f"{index:03d}-{screen_preset_slug(preset)}"
         label = f"screen:{index}/{len(presets)}"
         try:
             _, summary, taxonomy, _ = asyncio.run(
