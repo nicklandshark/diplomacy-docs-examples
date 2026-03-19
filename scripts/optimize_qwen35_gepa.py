@@ -213,6 +213,47 @@ def prompt_fingerprint(prompt: str | None) -> str:
     return digest[:8]
 
 
+def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def record_metric_call(
+    *,
+    metric_dir: Path,
+    call_index: int,
+    candidate: str,
+    row: SeedResult,
+) -> None:
+    candidate_hash = prompt_fingerprint(candidate)
+    candidate_dir = metric_dir / "candidates"
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    candidate_path = candidate_dir / f"{candidate_hash}.txt"
+    if not candidate_path.exists():
+        candidate_path.write_text(candidate.strip() + "\n", encoding="utf-8")
+    row_payload = {
+        "call_index": call_index,
+        "candidate_hash": candidate_hash,
+        "seed_result": row.to_json(),
+    }
+    rows_dir = metric_dir / "rows"
+    rows_dir.mkdir(parents=True, exist_ok=True)
+    write_json(rows_dir / f"{call_index:05d}-{candidate_hash}-seed_{row.seed:04d}.json", row_payload)
+    append_jsonl(
+        metric_dir / "metric_calls.jsonl",
+        {
+            "call_index": call_index,
+            "candidate_hash": candidate_hash,
+            "seed": row.seed,
+            "status": row.status,
+            "score": row.score,
+            "reward": row.reward,
+            "dominant_failure": row.dominant_failure,
+        },
+    )
+
+
 def helper_api_key_from_env(env_var: str) -> str:
     api_key = os.environ.get(env_var)
     if api_key:
@@ -846,8 +887,11 @@ class GEPAPromptEvaluator:
         preset: ExperimentPreset,
         app_name: str,
         per_seed_timeout_seconds: float,
+        metric_dir: Path | None = None,
     ) -> None:
         self.preset = preset
+        self.metric_dir = metric_dir
+        self._call_index = 0
         self._async_runner = asyncio.Runner()
         self._evaluator = ModalPoolEvaluator(
             preset=preset,
@@ -864,6 +908,14 @@ class GEPAPromptEvaluator:
 
     def __call__(self, candidate: str, example: dict[str, Any]) -> tuple[float, dict[str, Any]]:
         row = self._async_runner.run(self._evaluate_candidate(candidate, int(example["seed"])))
+        if self.metric_dir is not None:
+            self._call_index += 1
+            record_metric_call(
+                metric_dir=self.metric_dir,
+                call_index=self._call_index,
+                candidate=candidate,
+                row=row,
+            )
         return row.score, row.to_json()
 
     async def _evaluate_candidate(self, candidate: str, seed: int) -> SeedResult:
@@ -950,6 +1002,7 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
         preset=preset,
         app_name=f"{args.app_name}-optimize",
         per_seed_timeout_seconds=args.per_seed_timeout_seconds,
+        metric_dir=round_dir / "metric_calls",
     )
     try:
         reflection_lm = resolve_reflection_lm(
@@ -1106,8 +1159,9 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
 def run_report_phase(args: argparse.Namespace) -> None:
     ensure_required_envs()
     preset = load_preset(Path(args.preset_path)) if args.preset_path else build_default_preset(args)
+    run_dir = Path(args.run_dir)
     _, seeds = resolve_seed_pool(args.seed_pool)
-    report_dir = Path(args.run_dir) / "report" / (args.tag or slugify(f"{preset.model_name}-{args.seed_pool}"))
+    report_dir = run_dir / "report" / (args.tag or slugify(f"{preset.model_name}-{args.seed_pool}"))
     _, summary, taxonomy, review = asyncio.run(
         evaluate_preset(
             preset=preset,
@@ -1121,6 +1175,8 @@ def run_report_phase(args: argparse.Namespace) -> None:
         )
     )
     write_json(report_dir / "report.json", {"summary": summary, "taxonomy": taxonomy, "review": review})
+    write_json(run_dir / "latest_taxonomy.json", taxonomy)
+    write_json(run_dir / "latest_manual_review.json", review)
     print(json.dumps({"summary": summary, "taxonomy": taxonomy}, indent=2))
 
 

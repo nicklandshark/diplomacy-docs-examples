@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from scripts.optimize_qwen35_gepa import resolve_reflection_lm
+import json
+
+from scripts.optimize_qwen35_gepa import record_metric_call, resolve_reflection_lm
+from tinker_training.diplomacy_gepa import SeedResult
 
 
 class _FakeMessage:
@@ -77,3 +80,43 @@ def test_resolve_reflection_lm_leaves_callables_unchanged() -> None:
         helper_x_title="diplomacy-gepa-bench",
     )
     assert resolved is sentinel
+
+
+def test_record_metric_call_writes_candidate_and_row_artifacts(tmp_path) -> None:
+    row = SeedResult(
+        seed=87,
+        status="ok",
+        execution_backend="tinker_modal",
+        score=0.25,
+        reward=0.0,
+        gate=0.0,
+        transition_target=0.0,
+        relevant_submission=1.0,
+        rejected_tool_calls=0.0,
+        wait_count=0,
+        read_conversation_count=1,
+        compact_order_error=False,
+        has_think_close=False,
+        turns=5,
+        max_turns=10,
+        wall_time_seconds=12.0,
+        dominant_failure="gate_fail_after_legal_submission",
+    )
+
+    record_metric_call(
+        metric_dir=tmp_path,
+        call_index=3,
+        candidate="Use tools directly.",
+        row=row,
+    )
+
+    candidate_files = list((tmp_path / "candidates").glob("*.txt"))
+    row_files = list((tmp_path / "rows").glob("*.json"))
+    assert len(candidate_files) == 1
+    assert len(row_files) == 1
+    row_payload = json.loads(row_files[0].read_text())
+    assert row_payload["call_index"] == 3
+    assert row_payload["seed_result"]["seed"] == 87
+    lines = (tmp_path / "metric_calls.jsonl").read_text().strip().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["dominant_failure"] == "gate_fail_after_legal_submission"
