@@ -410,9 +410,15 @@ def review_background_from_taxonomy(
             lines.append(
                 f"- many trajectories submit legal orders but still miss the objective ({pattern_summary['legal_but_fail_gate_rate']:.0%}); bias toward the anchor/target order, not merely any legal set."
             )
+            lines.append(
+                "- when only one move is central to the objective, keep non-essential units on simple legal holds unless another order clearly supports that target."
+            )
         if pattern_summary.get("multi_submit_rate", 0.0) >= 0.1:
             lines.append(
                 f"- repeated submit_orders attempts are common ({pattern_summary['multi_submit_rate']:.0%}); after a rejection, rebuild from scratch with exactly one order per orderable unit."
+            )
+            lines.append(
+                "- do not resubmit variant order sets unless the previous submit_orders call was explicitly rejected by the environment."
             )
         if pattern_summary.get("read_conversation_after_legal_before_submit_rate", 0.0) >= 0.1:
             lines.append(

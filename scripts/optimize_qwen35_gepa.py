@@ -1179,16 +1179,20 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
             baseline_taxonomy=baseline_taxonomy,
             pattern_summary=latest_patterns,
             extra_lines=[
-                "Known 27B failure modes to fix if they still appear:",
+                "Known failure modes from recent raw reviews to fix if they still appear:",
                 "- compact order formatting like 'A MUN-BOH' instead of 'A MUN - BOH'",
                 "- passive wait/read_conversation loops",
                 "- stray '</think>' markup before tool calls",
                 "- finishing too late",
                 "- missing best-effort submission after no counterpart reply",
                 "- read_conversation using the wrong participant list instead of only the task counterpart",
+                "- read_conversation adding pagination arguments incorrectly; if you use offset, provide limit too, otherwise use participants only",
                 "- narration before tool calls even when the turn should start directly with a tool",
                 "- waiting for extra confirmation after the counterpart already provided commitment or anchor orders",
                 "- spending turns after read_legal_orders on more narration or extra reads instead of immediate submit_orders",
+                "- sending coordination messages that ask for unrelated support instead of the specific anchor/target move",
+                "- using speculative non-target moves that sabotage the main objective instead of conservative holds",
+                "- finishing or resubmitting while a fresh counterpart reply is pending after a wait or inbox check",
             ],
         )
         result = optimize_anything(
