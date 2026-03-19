@@ -171,16 +171,25 @@ def _build_system_prompt(
     agent_name: str,
     is_background_actor: bool,
     default_idle_sleep_seconds: float,
+    tracked_instruction_block: str | None = None,
 ) -> str:
     role_line = (
         "You are a hidden counterpart policy in the Diplomacy environment."
         if is_background_actor
         else "You are the trainable tracked policy in the Diplomacy environment."
     )
+    if is_background_actor or not tracked_instruction_block:
+        instruction_block = get_default_tracked_instruction_block(
+            default_idle_sleep_seconds=default_idle_sleep_seconds
+        )
+    else:
+        instruction_block = tracked_instruction_block.strip()
+    return "\n".join([role_line, f"Your power: {agent_name}", instruction_block])
+
+
+def get_default_tracked_instruction_block(*, default_idle_sleep_seconds: float) -> str:
     return "\n".join(
         [
-            role_line,
-            f"Your power: {agent_name}",
             "Use tools directly. Do not describe intended tool use in prose.",
             "Recommended loop:",
             "1. Read phase status and inbox notifications.",
@@ -988,6 +997,7 @@ class DiplomacyMessageEnv(MessageEnv):
         environment_kind: EnvironmentKind,
         actor_runtime: ActorRuntimeConfig,
         policy_config: RuntimePolicyConfig,
+        tracked_instruction_block: str | None = None,
     ) -> None:
         self.episode_context = episode_context
         self.renderer = renderer
@@ -1007,6 +1017,7 @@ class DiplomacyMessageEnv(MessageEnv):
             agent_name=tracked_power,
             is_background_actor=False,
             default_idle_sleep_seconds=actor_runtime.default_idle_sleep_seconds,
+            tracked_instruction_block=tracked_instruction_block,
         )
         self.initial_messages = (
             renderer.create_conversation_prefix_with_tools(tools=tool_specs, system_prompt=system_prompt)
@@ -1086,6 +1097,7 @@ def build_single_diplomacy_env(
     renderer_name: str,
     actor_runtime: ActorRuntimeConfig,
     policy_config: RuntimePolicyConfig,
+    tracked_instruction_block: str | None = None,
 ) -> BuiltDiplomacyEnv:
     tokenizer = tokenizer_utils.get_tokenizer(model_name)
     renderer = renderers.get_renderer(renderer_name, tokenizer)
@@ -1100,6 +1112,7 @@ def build_single_diplomacy_env(
         environment_kind=environment_kind,
         actor_runtime=actor_runtime,
         policy_config=policy_config,
+        tracked_instruction_block=tracked_instruction_block,
     )
     env = EnvFromMessageEnv(
         renderer=renderer,
@@ -1121,6 +1134,7 @@ class DiplomacyEnvGroupBuilder(EnvGroupBuilder):
         group_size: int,
         actor_runtime: ActorRuntimeConfig,
         policy_config: RuntimePolicyConfig,
+        tracked_instruction_block: str | None = None,
         rollout_runner_id: str | None = None,
     ) -> None:
         self.datum = datum
@@ -1130,6 +1144,7 @@ class DiplomacyEnvGroupBuilder(EnvGroupBuilder):
         self.group_size = group_size
         self.actor_runtime = actor_runtime
         self.policy_config = policy_config
+        self.tracked_instruction_block = tracked_instruction_block
         self._rollout_runner_id: str | None = None
         self.requires_in_process_rollout = False
         self.rollout_runner_id = rollout_runner_id
@@ -1153,6 +1168,7 @@ class DiplomacyEnvGroupBuilder(EnvGroupBuilder):
                 renderer_name=self.renderer_name,
                 actor_runtime=self.actor_runtime,
                 policy_config=self.policy_config,
+                tracked_instruction_block=self.tracked_instruction_block,
             )
             envs.append(built_env.env)
         return envs
@@ -1188,6 +1204,7 @@ class DiplomacyEnvGroupBuilder(EnvGroupBuilder):
                 trajectory_index=index,
                 group_id=group_id,
                 enable_logging=enable_logging and index == 0,
+                tracked_instruction_block=self.tracked_instruction_block,
             )
             for index in range(self.group_size)
         ]
@@ -1241,6 +1258,7 @@ class DiplomacyDatasetBuilder(RLDatasetBuilder):
     renderer_name: str
     actor_runtime: ActorRuntimeConfig
     policy_config: RuntimePolicyConfig
+    tracked_instruction_block: str | None = None
     batch_size: int
     group_size: int
     num_train_examples: int
@@ -1287,6 +1305,7 @@ class DiplomacyDatasetBuilder(RLDatasetBuilder):
                     group_size=self.group_size,
                     actor_runtime=self.actor_runtime,
                     policy_config=self.policy_config,
+                    tracked_instruction_block=self.tracked_instruction_block,
                     rollout_runner_id=self.rollout_runner_id,
                 )
                 for row in train_rows
@@ -1304,6 +1323,7 @@ class DiplomacyDatasetBuilder(RLDatasetBuilder):
                         group_size=self.group_size,
                         actor_runtime=self.actor_runtime,
                         policy_config=self.policy_config,
+                        tracked_instruction_block=self.tracked_instruction_block,
                         rollout_runner_id=self.rollout_runner_id,
                     )
                     for row in eval_rows

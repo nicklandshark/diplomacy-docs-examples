@@ -76,6 +76,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional checkpoint to warm-start from when no local curriculum state exists yet.",
     )
+    parser.add_argument(
+        "--tracked-instruction-block-path",
+        default=None,
+        help="Optional path to a tracked-policy instruction block override used for all rollout environments.",
+    )
 
     parser.add_argument("--modal-app-name", default="diplomacy-grpo-rollouts", help="Modal app name used for remote rollout workers.")
     parser.add_argument("--modal-timeout-seconds", type=int, default=900, help="Per-trajectory Modal timeout.")
@@ -174,6 +179,9 @@ def build_config(args: argparse.Namespace) -> CurriculumConfig:
         args.model_name,
         disable_thinking=not args.enable_thinking,
     )
+    tracked_instruction_block = None
+    if args.tracked_instruction_block_path:
+        tracked_instruction_block = Path(args.tracked_instruction_block_path).read_text().strip()
     return CurriculumConfig(
         model_name=args.model_name,
         renderer_name=renderer_name,
@@ -201,6 +209,7 @@ def build_config(args: argparse.Namespace) -> CurriculumConfig:
             memory_mb=args.modal_memory_mb,
         ),
         initial_checkpoint_path=args.initial_checkpoint_path,
+        tracked_instruction_block=tracked_instruction_block,
     )
 
 

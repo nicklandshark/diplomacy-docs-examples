@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from pathlib import Path
 
 from scripts.train_tinker_grpo_curriculum import build_config, parse_args
 from tinker_cookbook.rl import train as rl_train
@@ -76,6 +77,7 @@ def test_cli_builds_modal_curriculum_config() -> None:
         run_name="test-run",
         wandb_project="diplomacy-grpo",
         initial_checkpoint_path=None,
+        tracked_instruction_block_path=None,
         modal_app_name="rollout-app",
         modal_timeout_seconds=321,
         modal_cpu=3.0,
@@ -125,6 +127,64 @@ def test_cli_builds_modal_curriculum_config() -> None:
     assert len(config.stages) == 2
     assert config.stages[0].name == "stage1_tool_accuracy"
     assert config.stages[1].name == "stage2_full_press"
+    assert config.tracked_instruction_block is None
+
+
+def test_cli_loads_tracked_instruction_block(tmp_path: Path) -> None:
+    prompt_path = tmp_path / "tracked_instruction_block.txt"
+    prompt_path.write_text("Use tools directly.\nWait at most twice.\n")
+    args = argparse.Namespace(
+        model_name="Qwen/Qwen3.5-27B",
+        renderer_name="qwen3_5_disable_thinking",
+        enable_thinking=False,
+        log_root="~/tinker-runs/diplomacy-grpo",
+        run_name="test-run",
+        wandb_project="diplomacy-grpo",
+        initial_checkpoint_path=None,
+        tracked_instruction_block_path=str(prompt_path),
+        modal_app_name="rollout-app",
+        modal_timeout_seconds=321,
+        modal_cpu=3.0,
+        modal_memory_mb=8192,
+        openrouter_model="openai/gpt-5.4-mini",
+        openrouter_base_url="https://openrouter.ai/api/v1",
+        openrouter_api_key_env_var="OPENROUTER_API_KEY",
+        http_referer="https://local.codex",
+        x_title="diplomacy-grpo",
+        actor_max_turns=18,
+        session_timeout_seconds=90.0,
+        default_idle_sleep_seconds=0.5,
+        max_message_length=2000,
+        save_every=10,
+        eval_every=5,
+        num_groups_to_log=2,
+        disable_rollout_json_export=False,
+        stage1_train_examples=4,
+        stage1_eval_examples=0,
+        stage1_batch_size=1,
+        stage1_group_size=1,
+        stage1_max_tokens=128,
+        stage1_max_turns=8,
+        stage1_max_trajectory_tokens=2048,
+        stage1_train_seed=21,
+        stage1_eval_seed=10021,
+        stage1_learning_rate=3e-5,
+        stage1_lora_rank=8,
+        stage2_train_examples=4,
+        stage2_eval_examples=0,
+        stage2_batch_size=1,
+        stage2_group_size=1,
+        stage2_max_tokens=192,
+        stage2_max_turns=10,
+        stage2_max_trajectory_tokens=4096,
+        stage2_train_seed=37,
+        stage2_eval_seed=10037,
+        stage2_learning_rate=2e-5,
+        stage2_lora_rank=8,
+    )
+
+    config = build_config(args)
+    assert config.tracked_instruction_block == "Use tools directly.\nWait at most twice."
 
 
 def test_cli_default_rollout_counts_are_reduced(monkeypatch) -> None:

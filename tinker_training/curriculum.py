@@ -98,6 +98,7 @@ class CurriculumConfig:
     modal_rollout: ModalRolloutConfig = field(default_factory=ModalRolloutConfig)
     run_name: str | None = None
     initial_checkpoint_path: str | None = None
+    tracked_instruction_block: str | None = None
 
 
 @dataclass(frozen=True)
@@ -287,6 +288,7 @@ def build_stage_train_config(
         renderer_name=config.renderer_name,
         actor_runtime=actor_runtime,
         policy_config=policy_config,
+        tracked_instruction_block=config.tracked_instruction_block,
         batch_size=stage.batch_size,
         group_size=stage.group_size,
         num_train_examples=stage.num_train_examples,
