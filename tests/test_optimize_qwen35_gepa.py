@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from scripts.optimize_qwen35_gepa import record_metric_call, resolve_reflection_lm
+from scripts.optimize_qwen35_gepa import load_completed_rows, record_metric_call, resolve_reflection_lm
 from tinker_training.diplomacy_gepa import SeedResult
 
 
@@ -120,3 +120,56 @@ def test_record_metric_call_writes_candidate_and_row_artifacts(tmp_path) -> None
     lines = (tmp_path / "metric_calls.jsonl").read_text().strip().splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["dominant_failure"] == "gate_fail_after_legal_submission"
+
+
+def test_load_completed_rows_requires_all_seed_artifacts(tmp_path) -> None:
+    rows_dir = tmp_path / "rows"
+    rows_dir.mkdir()
+    row = SeedResult(
+        seed=87,
+        status="ok",
+        execution_backend="tinker_modal",
+        score=0.25,
+        reward=0.0,
+        gate=0.0,
+        transition_target=0.0,
+        relevant_submission=1.0,
+        rejected_tool_calls=0.0,
+        wait_count=0,
+        read_conversation_count=1,
+        compact_order_error=False,
+        has_think_close=False,
+        turns=5,
+        max_turns=10,
+        wall_time_seconds=12.0,
+        dominant_failure="gate_fail_after_legal_submission",
+    )
+    (rows_dir / "seed_0087.json").write_text(json.dumps(row.to_json()))
+
+    assert load_completed_rows(output_dir=tmp_path, seeds=[87, 88]) is None
+
+    row_b = SeedResult(
+        seed=88,
+        status="ok",
+        execution_backend="tinker_modal",
+        score=1.0,
+        reward=1.0,
+        gate=1.0,
+        transition_target=1.0,
+        relevant_submission=1.0,
+        rejected_tool_calls=0.0,
+        wait_count=0,
+        read_conversation_count=1,
+        compact_order_error=False,
+        has_think_close=False,
+        turns=4,
+        max_turns=10,
+        wall_time_seconds=10.0,
+        dominant_failure=None,
+    )
+    (rows_dir / "seed_0088.json").write_text(json.dumps(row_b.to_json()))
+
+    loaded = load_completed_rows(output_dir=tmp_path, seeds=[87, 88])
+    assert loaded is not None
+    assert [row.seed for row in loaded] == [87, 88]
+    assert loaded[1].reward == 1.0

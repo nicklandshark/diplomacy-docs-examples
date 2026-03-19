@@ -686,18 +686,20 @@ async def evaluate_preset(
     resume: bool,
     label: str,
 ) -> tuple[list[SeedResult], dict[str, Any], dict[str, Any], dict[str, Any]]:
-    async with ModalPoolEvaluator(
-        preset=preset,
-        app_name=app_name,
-        per_seed_timeout_seconds=per_seed_timeout_seconds,
-    ) as evaluator:
-        rows = await evaluator.evaluate_pool(
-            seeds=seeds,
-            output_dir=output_dir,
-            report_workers=report_workers,
-            resume=resume,
-            label=label,
-        )
+    rows = load_completed_rows(output_dir=output_dir, seeds=seeds) if resume else None
+    if rows is None:
+        async with ModalPoolEvaluator(
+            preset=preset,
+            app_name=app_name,
+            per_seed_timeout_seconds=per_seed_timeout_seconds,
+        ) as evaluator:
+            rows = await evaluator.evaluate_pool(
+                seeds=seeds,
+                output_dir=output_dir,
+                report_workers=report_workers,
+                resume=resume,
+                label=label,
+            )
     summary = summarize_rows(rows)
     taxonomy = build_taxonomy_summary(rows)
     review = build_manual_review(rows)
@@ -706,6 +708,19 @@ async def evaluate_preset(
     write_json(output_dir / "review.json", review)
     save_preset(output_dir / "preset.json", preset)
     return rows, summary, taxonomy, review
+
+
+def load_completed_rows(*, output_dir: Path, seeds: Sequence[int]) -> list[SeedResult] | None:
+    rows_dir = output_dir / "rows"
+    if not rows_dir.exists():
+        return None
+    rows: list[SeedResult] = []
+    for seed in seeds:
+        artifact_path = rows_dir / f"seed_{seed:04d}.json"
+        if not artifact_path.exists():
+            return None
+        rows.append(load_seed_result(artifact_path))
+    return rows
 
 
 def make_screen_presets(args: argparse.Namespace) -> list[ExperimentPreset]:
