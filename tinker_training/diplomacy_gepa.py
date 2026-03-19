@@ -245,13 +245,13 @@ def classify_seed_result(result: SeedResult) -> FailureBucket | None:
     if result.compact_order_error or _has_compact_order_text(result.turn_records):
         return "compact_order_format_error"
 
-    if _looks_like_counterpart_no_reply(result):
-        return "counterpart_no_reply"
-
     if result.wait_count >= 3 or (
         result.wait_count >= 2 and result.read_conversation_count >= 2 and result.relevant_submission < 1.0
     ):
         return "wait_loop"
+
+    if _looks_like_counterpart_no_reply(result):
+        return "counterpart_no_reply"
 
     if result.rejected_tool_calls > 0.0 and result.gate <= 0.0:
         return "rejected_tool_call"

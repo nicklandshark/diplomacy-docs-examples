@@ -94,7 +94,7 @@ def test_classify_failure_buckets() -> None:
 
     no_reply = _row(
         seed=23,
-        wait_count=2,
+        wait_count=1,
         read_conversation_count=2,
         action_text="I see only my message so far and Germany hasn't replied.",
     )
