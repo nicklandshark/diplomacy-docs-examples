@@ -330,6 +330,21 @@ def load_stage_checkpoints(stage_log_dir: Path) -> tuple[dict[str, Any] | None, 
     )
 
 
+def _append_checkpoint_entry(stage_log_dir: Path, entry: dict[str, Any]) -> None:
+    stage_log_dir.mkdir(parents=True, exist_ok=True)
+    with (stage_log_dir / "checkpoints.jsonl").open("a") as handle:
+        handle.write(json.dumps(entry) + "\n")
+
+
+def _replace_checkpoint_name(path: str, name: str) -> str | None:
+    if "/" in path:
+        return f"{path.rsplit('/', 1)[0]}/{name}"
+    scheme, separator, remainder = path.partition("://")
+    if separator and "/" not in remainder:
+        return f"{scheme}://{name}"
+    return None
+
+
 def _checkpoint_covers_stage_end(
     checkpoint: dict[str, Any] | None,
     *,
@@ -384,8 +399,88 @@ def _seed_stage_sampler_checkpoint_from_previous_stage(
         "batch": start_batch,
         "sampler_path": previous_sampler_ckpt["sampler_path"],
     }
-    with (stage_runtime.stage_log_dir / "checkpoints.jsonl").open("a") as handle:
-        handle.write(json.dumps(checkpoint_entry) + "\n")
+    _append_checkpoint_entry(stage_runtime.stage_log_dir, checkpoint_entry)
+
+
+async def _ensure_stage_end_checkpoint(
+    *,
+    training_client: tinker.TrainingClient,
+    stage_runtime: StageRuntime,
+    ttl_seconds: int | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    state_ckpt, sampler_ckpt = load_stage_checkpoints(stage_runtime.stage_log_dir)
+    stage_end_checkpoint_name = f"{stage_runtime.global_end_batch:06d}"
+    expected_batch = stage_runtime.global_end_batch
+    if _stage_end_checkpoint_already_saved(
+        state_ckpt=state_ckpt,
+        sampler_ckpt=sampler_ckpt,
+        expected_name=stage_end_checkpoint_name,
+        expected_batch=expected_batch,
+    ):
+        return state_ckpt, sampler_ckpt
+
+    sampler_path = None
+    if _checkpoint_covers_stage_end(
+        sampler_ckpt,
+        expected_name=stage_end_checkpoint_name,
+        expected_batch=expected_batch,
+    ):
+        sampler_path = sampler_ckpt["sampler_path"]
+    elif sampler_ckpt is not None and sampler_ckpt.get("sampler_path"):
+        sampler_path = _replace_checkpoint_name(
+            str(sampler_ckpt["sampler_path"]),
+            stage_end_checkpoint_name,
+        )
+
+    if sampler_path is None:
+        path_dict = await checkpoint_utils.save_checkpoint_async(
+            training_client=training_client,
+            name=stage_end_checkpoint_name,
+            log_path=str(stage_runtime.stage_log_dir),
+            kind="both",
+            loop_state={
+                "batch": expected_batch,
+                "stage": stage_runtime.stage.name,
+                "stage_batch": stage_runtime.num_batches,
+            },
+            ttl_seconds=ttl_seconds,
+        )
+        sampler_path = path_dict["sampler_path"]
+        state_path = path_dict["state_path"]
+    else:
+        if _checkpoint_covers_stage_end(
+            state_ckpt,
+            expected_name=stage_end_checkpoint_name,
+            expected_batch=expected_batch,
+        ):
+            state_path = state_ckpt["state_path"]
+        else:
+            path_dict = await checkpoint_utils.save_checkpoint_async(
+                training_client=training_client,
+                name=stage_end_checkpoint_name,
+                log_path=str(stage_runtime.stage_log_dir),
+                kind="state",
+                loop_state={
+                    "batch": expected_batch,
+                    "stage": stage_runtime.stage.name,
+                    "stage_batch": stage_runtime.num_batches,
+                },
+                ttl_seconds=ttl_seconds,
+            )
+            state_path = path_dict["state_path"]
+
+    _append_checkpoint_entry(
+        stage_runtime.stage_log_dir,
+        {
+            "name": stage_end_checkpoint_name,
+            "batch": expected_batch,
+            "stage": stage_runtime.stage.name,
+            "stage_batch": stage_runtime.num_batches,
+            "state_path": state_path,
+            "sampler_path": sampler_path,
+        },
+    )
+    return load_stage_checkpoints(stage_runtime.stage_log_dir)
 
 
 def _build_stage_manifest_entry(
@@ -677,27 +772,11 @@ async def run_curriculum(config: CurriculumConfig) -> Path:
             finally:
                 stage_logger.close()
 
-            state_ckpt, sampler_ckpt = load_stage_checkpoints(stage_runtime.stage_log_dir)
-            stage_end_checkpoint_name = f"{stage_runtime.global_end_batch:06d}"
-            if not _stage_end_checkpoint_already_saved(
-                state_ckpt=state_ckpt,
-                sampler_ckpt=sampler_ckpt,
-                expected_name=stage_end_checkpoint_name,
-                expected_batch=stage_runtime.global_end_batch,
-            ):
-                await checkpoint_utils.save_checkpoint_async(
-                    training_client=training_client,
-                    name=stage_end_checkpoint_name,
-                    log_path=str(stage_runtime.stage_log_dir),
-                    kind="both",
-                    loop_state={
-                        "batch": stage_runtime.global_end_batch,
-                        "stage": current_stage_name,
-                        "stage_batch": stage_runtime.num_batches,
-                    },
-                    ttl_seconds=stage_cfg.ttl_seconds,
-                )
-                state_ckpt, sampler_ckpt = load_stage_checkpoints(stage_runtime.stage_log_dir)
+            state_ckpt, sampler_ckpt = await _ensure_stage_end_checkpoint(
+                training_client=training_client,
+                stage_runtime=stage_runtime,
+                ttl_seconds=stage_cfg.ttl_seconds,
+            )
             stage_result = _build_stage_manifest_entry(
                 stage_runtime=stage_runtime,
                 state_ckpt=state_ckpt,

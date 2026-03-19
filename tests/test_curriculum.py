@@ -546,6 +546,17 @@ def test_seed_stage_sampler_checkpoint_from_previous_stage(tmp_path) -> None:
     }
 
 
+def test_replace_checkpoint_name_updates_last_path_segment() -> None:
+    assert (
+        curriculum._replace_checkpoint_name(
+            "tinker://model:train:0/sampler_weights/000000",
+            "000004",
+        )
+        == "tinker://model:train:0/sampler_weights/000004"
+    )
+    assert curriculum._replace_checkpoint_name("sampler://000002", "000004") == "sampler://000004"
+
+
 def test_curriculum_skips_duplicate_stage_end_checkpoint(tmp_path, monkeypatch) -> None:
     shared_training_client = _FakeTrainingClient()
     root_logger = _FakeRootLogger()
@@ -707,6 +718,76 @@ def test_curriculum_skips_duplicate_stage_end_checkpoint(tmp_path, monkeypatch) 
     assert save_calls.count((str(tmp_path / "curriculum-duplicate-checkpoint-test" / "stage1_tool_accuracy"), "000002")) == 1
     assert save_calls.count((str(tmp_path / "curriculum-duplicate-checkpoint-test" / "stage2_full_press"), "000004")) == 1
     assert save_calls[-1][1] == "final"
+
+
+def test_ensure_stage_end_checkpoint_recovers_existing_sampler_save(tmp_path, monkeypatch) -> None:
+    stage_runtime = curriculum.StageRuntime(
+        stage=curriculum.StageSpec(
+            name="stage1_tool_accuracy",
+            environment_kind="tool_accuracy",
+            num_train_examples=64,
+            num_eval_examples=8,
+            batch_size=16,
+            group_size=4,
+            max_tokens=256,
+            max_turns=14,
+            max_trajectory_tokens=None,
+            train_seed=21,
+            eval_seed=10021,
+            learning_rate=2e-5,
+            lora_rank=32,
+        ),
+        stage_log_dir=tmp_path / "stage1_tool_accuracy",
+        global_start_batch=0,
+        global_end_batch=4,
+    )
+    stage_runtime.stage_log_dir.mkdir(parents=True, exist_ok=True)
+    (stage_runtime.stage_log_dir / "checkpoints.jsonl").write_text(
+        json.dumps(
+            {
+                "name": "000000",
+                "batch": 0,
+                "sampler_path": "tinker://session/sampler_weights/000000",
+            }
+        )
+        + "\n"
+    )
+    save_calls: list[tuple[str, str, str]] = []
+
+    async def fake_save_checkpoint_async(
+        *,
+        training_client,
+        name: str,
+        log_path: str,
+        loop_state: dict[str, object],
+        kind: str = "state",
+        ttl_seconds=None,
+    ) -> dict[str, str]:
+        del training_client, ttl_seconds, loop_state
+        save_calls.append((log_path, name, kind))
+        assert kind == "state"
+        return {"state_path": f"state://{name}"}
+
+    monkeypatch.setattr(curriculum.checkpoint_utils, "save_checkpoint_async", fake_save_checkpoint_async)
+
+    state_ckpt, sampler_ckpt = asyncio.run(
+        curriculum._ensure_stage_end_checkpoint(
+            training_client=object(),
+            stage_runtime=stage_runtime,
+            ttl_seconds=None,
+        )
+    )
+
+    assert save_calls == [(str(stage_runtime.stage_log_dir), "000004", "state")]
+    assert state_ckpt == {
+        "name": "000004",
+        "batch": 4,
+        "stage": "stage1_tool_accuracy",
+        "stage_batch": 4,
+        "state_path": "state://000004",
+        "sampler_path": "tinker://session/sampler_weights/000004",
+    }
+    assert sampler_ckpt == state_ckpt
 
 
 def test_stage_metrics_logger_accepts_bound_method_configs(tmp_path) -> None:
