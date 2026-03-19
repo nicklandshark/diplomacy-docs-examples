@@ -22,9 +22,17 @@ class _FakeCompletion:
 
 
 class _FakeClient:
-    def __init__(self, *, api_key: str, base_url: str, default_headers: dict[str, str]) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        timeout: float,
+        default_headers: dict[str, str],
+    ) -> None:
         self.api_key = api_key
         self.base_url = base_url
+        self.timeout = timeout
         self.default_headers = default_headers
         self.calls: list[dict[str, object]] = []
         self.chat = self
@@ -38,8 +46,19 @@ class _FakeClient:
 def test_resolve_reflection_lm_wraps_openai_compatible_client(monkeypatch) -> None:
     created: dict[str, _FakeClient] = {}
 
-    def _fake_openai(*, api_key: str, base_url: str, default_headers: dict[str, str]) -> _FakeClient:
-        client = _FakeClient(api_key=api_key, base_url=base_url, default_headers=default_headers)
+    def _fake_openai(
+        *,
+        api_key: str,
+        base_url: str,
+        timeout: float,
+        default_headers: dict[str, str],
+    ) -> _FakeClient:
+        client = _FakeClient(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            default_headers=default_headers,
+        )
         created["client"] = client
         return client
 
@@ -52,12 +71,14 @@ def test_resolve_reflection_lm_wraps_openai_compatible_client(monkeypatch) -> No
         helper_api_key_env_var="OPENROUTER_API_KEY",
         helper_http_referer="https://local.codex",
         helper_x_title="diplomacy-gepa-bench",
+        timeout_seconds=45.0,
     )
 
     assert callable(lm)
     assert lm("hello") == "ok"
     assert created["client"].api_key == "test-key"
     assert created["client"].base_url == "https://openrouter.ai/api/v1"
+    assert created["client"].timeout == 45.0
     assert created["client"].default_headers == {
         "HTTP-Referer": "https://local.codex",
         "X-Title": "diplomacy-gepa-bench",
@@ -78,6 +99,7 @@ def test_resolve_reflection_lm_leaves_callables_unchanged() -> None:
         helper_api_key_env_var="OPENROUTER_API_KEY",
         helper_http_referer="https://local.codex",
         helper_x_title="diplomacy-gepa-bench",
+        timeout_seconds=45.0,
     )
     assert resolved is sentinel
 

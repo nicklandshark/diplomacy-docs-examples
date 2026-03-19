@@ -72,6 +72,7 @@ DEFAULT_RUN_DIR = REPO_ROOT / ".tmp" / "gepa_long_run"
 DEFAULT_APP_NAME = "diplomacy-gepa-long-run"
 DEFAULT_LOG_ROOT = "~/tinker-runs/diplomacy-grpo"
 DEFAULT_TEMPERATURE = 1.0
+DEFAULT_REFLECTION_TIMEOUT_SECONDS = 60.0
 TOOL_PATTERN = re.compile(r"<function=([^>]+)>")
 
 
@@ -118,6 +119,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--round-index", type=int, default=1)
     parser.add_argument("--max-metric-calls", type=int, default=128)
     parser.add_argument("--reflection-lm", default=DEFAULT_REFLECTION_MODEL)
+    parser.add_argument("--reflection-timeout-seconds", type=float, default=DEFAULT_REFLECTION_TIMEOUT_SECONDS)
     parser.add_argument("--reflection-minibatch-size", type=int, default=8)
     parser.add_argument("--train-seed-pool", default=None)
     parser.add_argument("--val-seed-pool", default="gepa_val")
@@ -268,10 +270,12 @@ def build_openai_compatible_lm(
     api_key_env_var: str,
     http_referer: str,
     x_title: str,
+    timeout_seconds: float,
 ):
     client = OpenAI(
         api_key=helper_api_key_from_env(api_key_env_var),
         base_url=base_url,
+        timeout=timeout_seconds,
         default_headers={
             "HTTP-Referer": http_referer,
             "X-Title": x_title,
@@ -311,6 +315,7 @@ def resolve_reflection_lm(
     helper_api_key_env_var: str,
     helper_http_referer: str,
     helper_x_title: str,
+    timeout_seconds: float,
 ) -> Any:
     if not isinstance(reflection_lm, str):
         return reflection_lm
@@ -320,6 +325,7 @@ def resolve_reflection_lm(
         api_key_env_var=helper_api_key_env_var,
         http_referer=helper_http_referer,
         x_title=helper_x_title,
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -1026,6 +1032,7 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
             helper_api_key_env_var=preset.helper_api_key_env_var,
             helper_http_referer=preset.helper_http_referer,
             helper_x_title=preset.helper_x_title,
+            timeout_seconds=args.reflection_timeout_seconds,
         )
         background = review_background_from_taxonomy(
             baseline_taxonomy=baseline_taxonomy,
