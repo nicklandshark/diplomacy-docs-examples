@@ -111,11 +111,26 @@ def test_classify_failure_buckets() -> None:
     )
     assert classify_seed_result(parse) == "parse_or_markup_failure"
 
+    timeout = _row(
+        seed=251,
+        status="error",
+        failure_kind="TimeoutError",
+        failure_message="rollout exceeded timeout",
+    )
+    assert classify_seed_result(timeout) == "late_finish"
+
     late = _row(seed=26, stop_condition="max_turns_reached")
     assert classify_seed_result(late) == "late_finish"
 
     gate_fail = _row(seed=27, relevant_submission=1.0)
     assert classify_seed_result(gate_fail) == "gate_fail_after_legal_submission"
+
+    parse_metric = _row(seed=271)
+    parse_metric = replace(
+        parse_metric,
+        last_metrics={"parse_error": 1.0},
+    )
+    assert classify_seed_result(parse_metric) == "parse_or_markup_failure"
 
 
 def test_summary_taxonomy_and_review_outputs() -> None:
@@ -136,3 +151,14 @@ def test_summary_taxonomy_and_review_outputs() -> None:
     review = build_manual_review([success, failed], failed_limit=1, success_limit=1)
     assert len(review["failed"]) == 1
     assert len(review["successful"]) == 1
+
+
+def test_seed_result_json_keeps_failure_bucket_alias() -> None:
+    row = _row(seed=41, wait_count=3, read_conversation_count=2)
+    row = replace(row, dominant_failure=classify_seed_result(row))
+
+    payload = row.to_json()
+    assert payload["failure_bucket"] == "wait_loop"
+
+    restored = SeedResult.from_json(payload)
+    assert restored.dominant_failure == "wait_loop"

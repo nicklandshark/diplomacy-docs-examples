@@ -129,11 +129,16 @@ class SeedResult:
     artifact_path: str | None = None
 
     def to_json(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["failure_bucket"] = payload["dominant_failure"]
+        return payload
 
     @classmethod
     def from_json(cls, payload: dict[str, Any]) -> "SeedResult":
         payload = dict(payload)
+        if "dominant_failure" not in payload and "failure_bucket" in payload:
+            payload["dominant_failure"] = payload["failure_bucket"]
+        payload.pop("failure_bucket", None)
         payload["turn_records"] = [TurnRecord(**record) for record in payload.get("turn_records", [])]
         return cls(**payload)
 
@@ -231,6 +236,8 @@ def build_manual_review(rows: list[SeedResult], *, failed_limit: int = 10, succe
 def classify_seed_result(result: SeedResult) -> FailureBucket | None:
     if result.status != "ok":
         lowered = f"{result.failure_kind or ''} {result.failure_message or ''}".lower()
+        if "timeout" in lowered:
+            return "late_finish"
         if any(pattern in lowered for pattern in _PARSE_MARKUP_PATTERNS):
             return "parse_or_markup_failure"
         return "other"
@@ -248,6 +255,9 @@ def classify_seed_result(result: SeedResult) -> FailureBucket | None:
 
     if result.rejected_tool_calls > 0.0 and result.gate <= 0.0:
         return "rejected_tool_call"
+
+    if float(result.last_metrics.get("parse_error", 0.0)) > 0.0:
+        return "parse_or_markup_failure"
 
     if result.has_think_close and result.gate <= 0.0:
         return "parse_or_markup_failure"

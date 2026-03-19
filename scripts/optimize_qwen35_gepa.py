@@ -715,18 +715,22 @@ def run_screen_phase(args: argparse.Namespace) -> None:
     for index, preset in enumerate(presets, start=1):
         config_dir = screen_dir / f"{index:03d}-{slugify(preset.renderer_name)}-t{preset.temperature}-m{preset.max_turns}-a{preset.actor_max_turns}"
         label = f"screen:{index}/{len(presets)}"
-        _, summary, taxonomy, _ = asyncio.run(
-            evaluate_preset(
-                preset=preset,
-                seeds=seeds,
-                output_dir=config_dir,
-                app_name=f"{args.app_name}-screen",
-                report_workers=args.report_workers,
-                per_seed_timeout_seconds=args.per_seed_timeout_seconds,
-                resume=args.resume,
-                label=label,
+        try:
+            _, summary, taxonomy, _ = asyncio.run(
+                evaluate_preset(
+                    preset=preset,
+                    seeds=seeds,
+                    output_dir=config_dir,
+                    app_name=f"{args.app_name}-screen",
+                    report_workers=args.report_workers,
+                    per_seed_timeout_seconds=args.per_seed_timeout_seconds,
+                    resume=args.resume,
+                    label=label,
+                )
             )
-        )
+        except KeyboardInterrupt:
+            print(f"[{label}] interrupted; partial artifacts remain in {config_dir}", flush=True)
+            raise
         ranked_entries.append(
             {
                 "preset_path": str(config_dir / "preset.json"),
