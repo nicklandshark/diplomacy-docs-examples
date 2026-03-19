@@ -145,9 +145,7 @@ def _(defaults, make_default_run_name, mo):
         default_interval="15s",
         label="Auto-refresh process and manifest",
     )
-    launch_button = mo.ui.button(
-        value=0,
-        on_click=lambda value: value + 1,
+    launch_button = mo.ui.run_button(
         label="Launch training",
     )
 

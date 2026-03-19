@@ -12,9 +12,8 @@ def test_marimo_notebook_contains_cli_and_manifest_controls() -> None:
     assert "train_tinker_grpo_curriculum.py" in text
     assert "resolve_manifest_path" in text
     assert "launch_once" in text
-    assert "mo.ui.button" in text
+    assert "mo.ui.run_button" in text
     assert "mo.ui.refresh" in text
-    assert "on_click=lambda value: value + 1" in text
     assert "mo.ui.checkbox" in text
     assert "mo.ui.dropdown" not in text
     assert "# Tinker GRPO Operator Notebook" in text
