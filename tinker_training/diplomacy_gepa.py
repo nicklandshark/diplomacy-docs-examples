@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from statistics import mean
 from typing import Any, Literal
@@ -61,6 +61,8 @@ _PARSE_MARKUP_PATTERNS = (
     "malformed",
     "</think>",
 )
+_XML_TOOL_PATTERN = re.compile(r"<function=([^>]+)>")
+_JSON_TOOL_PATTERN = re.compile(r'"name"\s*:\s*"([^"]+)"')
 
 
 @dataclass(frozen=True)
@@ -139,8 +141,37 @@ class SeedResult:
         if "dominant_failure" not in payload and "failure_bucket" in payload:
             payload["dominant_failure"] = payload["failure_bucket"]
         payload.pop("failure_bucket", None)
-        payload["turn_records"] = [TurnRecord(**record) for record in payload.get("turn_records", [])]
-        return cls(**payload)
+        turn_records = [TurnRecord(**record) for record in payload.get("turn_records", [])]
+        repaired_turn_records = [
+            replace(record, tools=_extract_tool_names(record.action_text))
+            if not record.tools and _extract_tool_names(record.action_text)
+            else record
+            for record in turn_records
+        ]
+        payload["turn_records"] = repaired_turn_records
+        row = cls(**payload)
+        if repaired_turn_records:
+            observation_snippets = [
+                (record.observation_excerpt or "").lower() for record in repaired_turn_records
+            ]
+            row = replace(
+                row,
+                wait_count=sum(record.tools.count("wait") for record in repaired_turn_records),
+                read_conversation_count=sum(
+                    record.tools.count("read_conversation") for record in repaired_turn_records
+                ),
+                compact_order_error=row.compact_order_error
+                or any(
+                    "does not belong to" in snippet or "invalid order" in snippet
+                    for snippet in observation_snippets
+                )
+                or _has_compact_order_text(repaired_turn_records),
+                has_think_close=row.has_think_close
+                or any("</think>" in record.action_text for record in repaired_turn_records),
+                turns=len(repaired_turn_records),
+            )
+            row = replace(row, dominant_failure=classify_seed_result(row))
+        return row
 
 
 def resolve_seed_pool(seed_pool: str) -> tuple[str, list[int]]:
@@ -223,10 +254,18 @@ def build_manual_review(rows: list[SeedResult], *, failed_limit: int = 10, succe
         [row for row in rows if row.dominant_failure is not None or row.status != "ok"],
         key=lambda row: (row.score, row.seed),
     )[:failed_limit]
-    success_rows = sorted(
-        [row for row in rows if row.status == "ok" and row.gate > 0.0],
-        key=lambda row: (-row.score, row.seed),
-    )[:success_limit]
+    success_candidates = [row for row in rows if row.status == "ok" and row.gate > 0.0]
+    if len(success_candidates) < success_limit:
+        seen = {row.seed for row in success_candidates}
+        for row in sorted(
+            [row for row in rows if row.status == "ok" and row.seed not in seen],
+            key=lambda row: (-row.score, row.seed),
+        ):
+            success_candidates.append(row)
+            seen.add(row.seed)
+            if len(success_candidates) >= success_limit:
+                break
+    success_rows = sorted(success_candidates, key=lambda row: (-row.score, row.seed))[:success_limit]
     return {
         "failed": [_review_entry(row) for row in failed_rows],
         "successful": [_review_entry(row) for row in success_rows],
@@ -419,6 +458,13 @@ def _trajectory_signals(row: SeedResult) -> dict[str, Any]:
 
 
 def _review_entry(row: SeedResult) -> dict[str, Any]:
+    tool_counts: dict[str, int] = {}
+    narration_before_tool_turns: list[int] = []
+    for record in row.turn_records:
+        for tool in record.tools:
+            tool_counts[tool] = tool_counts.get(tool, 0) + 1
+        if _first_nonempty_text_before_tool(record.action_text):
+            narration_before_tool_turns.append(record.turn_index)
     return {
         "seed": row.seed,
         "status": row.status,
@@ -430,6 +476,8 @@ def _review_entry(row: SeedResult) -> dict[str, Any]:
         "dominant_failure": row.dominant_failure,
         "artifact_path": row.artifact_path,
         "trajectory_signals": _trajectory_signals(row),
+        "tool_counts": tool_counts,
+        "narration_before_tool_turns": narration_before_tool_turns,
         "recent_trace": [
             {
                 "turn_index": record.turn_index,
@@ -440,4 +488,29 @@ def _review_entry(row: SeedResult) -> dict[str, Any]:
             }
             for record in row.turn_records[-3:]
         ],
+        "turn_trace": [
+            {
+                "turn_index": record.turn_index,
+                "tools": record.tools,
+                "reward": record.reward,
+                "episode_done": record.episode_done,
+                "action_text": record.action_text[:800],
+                "observation_excerpt": record.observation_excerpt[:300],
+                "metrics": record.metrics,
+            }
+            for record in row.turn_records
+        ],
     }
+
+
+def _extract_tool_names(action_text: str) -> list[str]:
+    if not action_text:
+        return []
+    xml_names = _XML_TOOL_PATTERN.findall(action_text)
+    if xml_names:
+        return xml_names
+    names: list[str] = []
+    for tool_call in re.findall(r"<tool_call>(.*?)</tool_call>", action_text, flags=re.DOTALL):
+        for name in _JSON_TOOL_PATTERN.findall(tool_call):
+            names.append(name)
+    return names

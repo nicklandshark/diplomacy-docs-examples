@@ -152,7 +152,9 @@ def test_summary_taxonomy_and_review_outputs() -> None:
     assert len(review["failed"]) == 1
     assert len(review["successful"]) == 1
     assert "recent_trace" in review["failed"][0]
+    assert "turn_trace" in review["failed"][0]
     assert "trajectory_signals" in review["failed"][0]
+    assert review["failed"][0]["tool_counts"]
 
 
 def test_manual_review_includes_contact_and_post_legal_signals() -> None:
@@ -209,6 +211,56 @@ def test_manual_review_includes_contact_and_post_legal_signals() -> None:
 
 def test_seed_result_json_keeps_failure_bucket_alias() -> None:
     row = _row(seed=41, wait_count=3, read_conversation_count=2)
+    row = replace(
+        row,
+        turn_records=[
+            TurnRecord(
+                turn_index=0,
+                tools=["wait"],
+                action_text="wait",
+                observation_excerpt="no response yet",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+            TurnRecord(
+                turn_index=1,
+                tools=["read_conversation"],
+                action_text="read",
+                observation_excerpt="still only my message",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+            TurnRecord(
+                turn_index=2,
+                tools=["wait"],
+                action_text="wait",
+                observation_excerpt="still only my message",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+            TurnRecord(
+                turn_index=3,
+                tools=["read_conversation"],
+                action_text="read",
+                observation_excerpt="still only my message",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+            TurnRecord(
+                turn_index=4,
+                tools=["wait"],
+                action_text="wait",
+                observation_excerpt="still only my message",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+        ],
+    )
     row = replace(row, dominant_failure=classify_seed_result(row))
 
     payload = row.to_json()
@@ -216,3 +268,57 @@ def test_seed_result_json_keeps_failure_bucket_alias() -> None:
 
     restored = SeedResult.from_json(payload)
     assert restored.dominant_failure == "wait_loop"
+
+
+def test_seed_result_from_json_backfills_json_tool_names() -> None:
+    row = _row(seed=61, reward=0.0, relevant_submission=1.0)
+    row = replace(
+        row,
+        turn_records=[
+            TurnRecord(
+                turn_index=0,
+                tools=[],
+                action_text='<tool_call>{"name":"send_message","arguments":{"participants":["FRANCE"],"message":"hi"}}</tool_call>',
+                observation_excerpt="",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+            TurnRecord(
+                turn_index=1,
+                tools=[],
+                action_text='<tool_call>{"name":"wait","arguments":{"seconds":5}}</tool_call>',
+                observation_excerpt="still only my message",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+            TurnRecord(
+                turn_index=2,
+                tools=[],
+                action_text='<tool_call>{"name":"read_conversation","arguments":{"participants":["FRANCE"]}}</tool_call>',
+                observation_excerpt="still only my message",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+        ],
+        wait_count=0,
+        read_conversation_count=0,
+        dominant_failure="other",
+    )
+    restored = SeedResult.from_json(row.to_json())
+    assert restored.turn_records[0].tools == ["send_message"]
+    assert restored.turn_records[1].tools == ["wait"]
+    assert restored.wait_count == 1
+    assert restored.read_conversation_count == 1
+
+
+def test_manual_review_backfills_near_miss_successes_when_no_gate_wins() -> None:
+    rows = [
+        replace(_row(seed=71, reward=0.85, relevant_submission=1.0), dominant_failure="gate_fail_after_legal_submission"),
+        replace(_row(seed=72, reward=0.25, relevant_submission=1.0), dominant_failure="rejected_tool_call"),
+        replace(_row(seed=73, reward=-0.25), dominant_failure="wait_loop"),
+    ]
+    review = build_manual_review(rows, failed_limit=2, success_limit=2)
+    assert [entry["seed"] for entry in review["successful"]] == [71, 72]

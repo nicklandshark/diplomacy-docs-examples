@@ -74,6 +74,7 @@ DEFAULT_LOG_ROOT = "~/tinker-runs/diplomacy-grpo"
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_REFLECTION_TIMEOUT_SECONDS = 60.0
 TOOL_PATTERN = re.compile(r"<function=([^>]+)>")
+JSON_TOOL_PATTERN = re.compile(r'"name"\s*:\s*"([^"]+)"')
 
 
 def parse_args() -> argparse.Namespace:
@@ -638,7 +639,15 @@ class ModalPoolEvaluator:
 
 
 def extract_tool_names(action_text: str) -> list[str]:
-    return TOOL_PATTERN.findall(action_text or "")
+    if not action_text:
+        return []
+    xml_names = TOOL_PATTERN.findall(action_text)
+    if xml_names:
+        return xml_names
+    names: list[str] = []
+    for tool_call in re.findall(r"<tool_call>(.*?)</tool_call>", action_text, flags=re.DOTALL):
+        names.extend(JSON_TOOL_PATTERN.findall(tool_call))
+    return names
 
 
 def model_input_text(model_input: Any) -> str:

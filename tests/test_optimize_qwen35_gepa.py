@@ -4,6 +4,7 @@ import json
 
 from scripts.optimize_qwen35_gepa import (
     GEPAPromptEvaluator,
+    extract_tool_names,
     is_transient_seed_error,
     load_completed_rows,
     load_metric_cache,
@@ -109,6 +110,15 @@ def test_resolve_reflection_lm_leaves_callables_unchanged() -> None:
         timeout_seconds=45.0,
     )
     assert resolved is sentinel
+
+
+def test_extract_tool_names_supports_xml_and_json_formats() -> None:
+    assert extract_tool_names('<tool_call><function=read_phase_status></function></tool_call>') == [
+        "read_phase_status"
+    ]
+    assert extract_tool_names(
+        '<tool_call>{"name":"submit_orders","arguments":{"orders":["A PAR - PIC"]}}</tool_call>'
+    ) == ["submit_orders"]
 
 
 def test_record_metric_call_writes_candidate_and_row_artifacts(tmp_path) -> None:
