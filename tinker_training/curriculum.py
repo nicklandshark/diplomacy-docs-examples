@@ -50,7 +50,13 @@ DEFAULT_OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
 @dataclass(frozen=True)
 class StageSpec:
     name: str
-    environment_kind: Literal["tool_accuracy", "full_press"]
+    environment_kind: Literal[
+        "tool_accuracy",
+        "target_execution",
+        "supported_target",
+        "cooperative_press",
+        "full_press",
+    ]
     num_train_examples: int
     num_eval_examples: int
     batch_size: int
@@ -62,6 +68,7 @@ class StageSpec:
     eval_seed: int
     learning_rate: float
     lora_rank: int
+    tracked_instruction_block: str | None = None
 
 
 @dataclass(frozen=True)
@@ -288,7 +295,9 @@ def build_stage_train_config(
         renderer_name=config.renderer_name,
         actor_runtime=actor_runtime,
         policy_config=policy_config,
-        tracked_instruction_block=config.tracked_instruction_block,
+        tracked_instruction_block=stage.tracked_instruction_block
+        if stage.tracked_instruction_block is not None
+        else config.tracked_instruction_block,
         batch_size=stage.batch_size,
         group_size=stage.group_size,
         num_train_examples=stage.num_train_examples,

@@ -8,7 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import tinker
 
@@ -28,10 +28,10 @@ from tinker_training.modal_image import rollout_runtime_image
 from tinker_cookbook.completers import TinkerTokenCompleter, TokensWithLogprobs
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.rl.types import SamplingRef, Trajectory, Transition
+from data_generator import EnvironmentKind
 
 logger = logging.getLogger(__name__)
 
-EnvironmentKind = Literal["tool_accuracy", "full_press"]
 _RUNNER_REGISTRY: dict[str, "TrajectorySandboxRunner"] = {}
 
 
@@ -66,6 +66,7 @@ class TrajectoryRolloutRequest:
     trajectory_index: int
     group_id: str
     enable_logging: bool = False
+    tracked_instruction_block: str | None = None
 
 
 @dataclass
@@ -172,10 +173,14 @@ async def _execute_rollout_request(request: TrajectoryRolloutRequest) -> Traject
             renderer_name=request.renderer_name,
             actor_runtime=request.actor_runtime,
             policy_config=request.policy_config,
+            tracked_instruction_block=request.tracked_instruction_block,
         )
         service_client = tinker.ServiceClient(base_url=request.sampling_ref.base_url)
+        if request.sampling_ref.sampler_path is None and request.sampling_ref.base_model is None:
+            raise ValueError("sampling_ref must provide sampler_path or base_model")
         sampling_client = service_client.create_sampling_client(
-            model_path=request.sampling_ref.sampler_path
+            model_path=request.sampling_ref.sampler_path,
+            base_model=request.sampling_ref.base_model,
         )
         policy = TinkerTokenCompleter(
             sampling_client,
@@ -200,6 +205,7 @@ async def _execute_rollout_request(request: TrajectoryRolloutRequest) -> Traject
                 "trajectory_index": request.trajectory_index,
                 "environment_kind": request.environment_kind,
                 "sampler_path": request.sampling_ref.sampler_path,
+                "base_model": request.sampling_ref.base_model,
             },
         )
     except Exception as exc:

@@ -6,6 +6,7 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VENDORED_COOKBOOK_ROOT = REPO_ROOT / "vendor" / "tinker-cookbook"
@@ -27,6 +28,7 @@ from tinker_training.curriculum import (
     run_curriculum,
 )
 from tinker_training.diplomacy_adapter import get_default_renderer_name
+from tinker_training.prompt_family import DEFAULT_PROMPT_FAMILY_DIR, load_prompt_family_blocks
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,11 +37,91 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+CURRICULUM_PRESETS = ("legacy_two_stage", "full_v1")
+FULL_V1_STAGE_DEFAULTS: tuple[dict[str, Any], ...] = (
+    {
+        "name": "stage1_tool_accuracy",
+        "environment_kind": "tool_accuracy",
+        "num_train_examples": 64,
+        "num_eval_examples": 8,
+        "batch_size": 16,
+        "group_size": 4,
+        "max_tokens": 256,
+        "max_turns": 14,
+        "max_trajectory_tokens": 8192,
+        "train_seed": 21,
+        "eval_seed": 10_021,
+    },
+    {
+        "name": "stage2_target_execution",
+        "environment_kind": "target_execution",
+        "num_train_examples": 64,
+        "num_eval_examples": 8,
+        "batch_size": 16,
+        "group_size": 4,
+        "max_tokens": 320,
+        "max_turns": 12,
+        "max_trajectory_tokens": 8192,
+        "train_seed": 37,
+        "eval_seed": 10_037,
+    },
+    {
+        "name": "stage3_supported_target",
+        "environment_kind": "supported_target",
+        "num_train_examples": 64,
+        "num_eval_examples": 8,
+        "batch_size": 16,
+        "group_size": 4,
+        "max_tokens": 320,
+        "max_turns": 14,
+        "max_trajectory_tokens": 8192,
+        "train_seed": 53,
+        "eval_seed": 10_053,
+    },
+    {
+        "name": "stage4_cooperative_press",
+        "environment_kind": "cooperative_press",
+        "num_train_examples": 48,
+        "num_eval_examples": 8,
+        "batch_size": 12,
+        "group_size": 4,
+        "max_tokens": 384,
+        "max_turns": 16,
+        "max_trajectory_tokens": 12_288,
+        "train_seed": 69,
+        "eval_seed": 10_069,
+    },
+    {
+        "name": "stage5_full_press",
+        "environment_kind": "full_press",
+        "num_train_examples": 48,
+        "num_eval_examples": 8,
+        "batch_size": 12,
+        "group_size": 4,
+        "max_tokens": 384,
+        "max_turns": 20,
+        "max_trajectory_tokens": 12_288,
+        "train_seed": 85,
+        "eval_seed": 10_085,
+    },
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Train a Tinker GRPO curriculum for Diplomacy with Modal-isolated rollouts.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--curriculum-preset",
+        choices=CURRICULUM_PRESETS,
+        default="legacy_two_stage",
+        help="Which curriculum preset to run.",
+    )
+    parser.add_argument(
+        "--prompt-family-dir",
+        default=str(DEFAULT_PROMPT_FAMILY_DIR),
+        help="Directory containing the stage-specific tracked-policy prompts for `full_v1`.",
     )
     parser.add_argument(
         "--model-name",
@@ -79,7 +161,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tracked-instruction-block-path",
         default=None,
-        help="Optional path to a tracked-policy instruction block override used for all rollout environments.",
+        help="Optional path to a tracked-policy instruction block override used as the global fallback prompt.",
+    )
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=2e-5,
+        help="Global learning rate used by the `full_v1` curriculum preset.",
+    )
+    parser.add_argument(
+        "--lora-rank",
+        type=int,
+        default=32,
+        help="Global LoRA rank used by the `full_v1` curriculum preset.",
     )
 
     parser.add_argument("--modal-app-name", default="diplomacy-grpo-rollouts", help="Modal app name used for remote rollout workers.")
@@ -140,6 +234,18 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_stages(args: argparse.Namespace) -> tuple[StageSpec, ...]:
+    curriculum_preset = getattr(args, "curriculum_preset", "legacy_two_stage")
+    prompt_family_dir = getattr(args, "prompt_family_dir", str(DEFAULT_PROMPT_FAMILY_DIR))
+    learning_rate = getattr(args, "learning_rate", 2e-5)
+    lora_rank = getattr(args, "lora_rank", 32)
+    if curriculum_preset == "full_v1":
+        prompt_blocks = load_prompt_family_blocks(prompt_family_dir)
+        return build_full_v1_stage_specs(
+            prompt_blocks=prompt_blocks,
+            learning_rate=learning_rate,
+            lora_rank=lora_rank,
+        )
+
     return (
         StageSpec(
             name="stage1_tool_accuracy",
@@ -171,6 +277,23 @@ def build_stages(args: argparse.Namespace) -> tuple[StageSpec, ...]:
             learning_rate=args.stage2_learning_rate,
             lora_rank=args.stage2_lora_rank,
         ),
+    )
+
+
+def build_full_v1_stage_specs(
+    *,
+    prompt_blocks: dict[str, str],
+    learning_rate: float,
+    lora_rank: int,
+) -> tuple[StageSpec, ...]:
+    return tuple(
+        StageSpec(
+            learning_rate=learning_rate,
+            lora_rank=lora_rank,
+            tracked_instruction_block=prompt_blocks[stage_defaults["environment_kind"]],
+            **stage_defaults,
+        )
+        for stage_defaults in FULL_V1_STAGE_DEFAULTS
     )
 
 

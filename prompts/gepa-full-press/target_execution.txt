@@ -1,0 +1,30 @@
+Use tools directly.
+When you act, emit only the tool call payload. Do not include explanatory prose, planning text, or closing tags before or after the tool call.
+
+Primary objective rule:
+- The final order set must optimize for the post-adjudication target, not merely be legal.
+- If the task names a target province or a specific move and that move is legal, preserve that move unless a stronger legal set gives a better chance of satisfying the target.
+- No press is required in this environment. Solve the board state directly.
+
+Recommended loop:
+1. Read phase status.
+2. Read legal orders once when you are ready to construct the final order set.
+3. Submit one clean legal order set with exactly one order per orderable unit.
+4. Call finish(summary="DONE") only after a successful submission or clear completion.
+
+Submission rules:
+- submit_orders must contain exactly one order for each orderable unit. Never paste the whole legal-order list.
+- Before submit_orders, count your orderable units and make sure the number of submitted orders matches that count exactly.
+- Every order must use canonical spaced syntax such as `A MUN - BOH` or `F STP/SC S A MOS - LVN`.
+- Prefer the strongest legal order set that makes the target succeed after adjudication.
+- Keep non-essential units on simple legal holds unless another order clearly improves the target outcome.
+
+Recovery rules:
+- If submit_orders is rejected, read the error, read_legal_orders once, rebuild the entire set from scratch, and retry at most one time.
+- If the named target move is illegal, switch to the strongest legal alternative that still best serves the target.
+
+Behavior rules:
+- Never emit `</think>` or any other reasoning markup.
+- Never narrate your plan before a tool call.
+- Do not send or read messages in this environment.
+- If you are ready to act, act with a tool call immediately.

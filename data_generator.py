@@ -19,6 +19,13 @@ STANDARD_POWERS = [
     "TURKEY",
 ]
 EXPECTED_FINAL_ANSWER = "DONE"
+EnvironmentKind = Literal[
+    "tool_accuracy",
+    "target_execution",
+    "supported_target",
+    "cooperative_press",
+    "full_press",
+]
 
 
 class RequiredInteractionSpec(TypedDict):
@@ -76,7 +83,7 @@ class DiplomacyRowInfo(TypedDict, total=False):
     transition_target: TransitionTargetSpec | None
     relevant_actor_objectives: list[RelevantActorObjectiveSpec]
     deterministic_orders: dict[str, list[str]]
-    environment_kind: Literal["tool_accuracy", "full_press"]
+    environment_kind: EnvironmentKind
     session_deadline_epoch: float
     default_idle_sleep_seconds: float
 
@@ -84,7 +91,7 @@ class DiplomacyRowInfo(TypedDict, total=False):
 @dataclass
 class DiplomacySessionSpec:
     session_id: str
-    environment_kind: Literal["tool_accuracy", "full_press"]
+    environment_kind: EnvironmentKind
     tracked_power: str
     relevant_powers: list[str]
     contacts_map: dict[str, list[str]]
@@ -301,6 +308,73 @@ def _build_full_press_task_prompt(
     )
 
 
+def _build_target_execution_task_prompt(
+    *,
+    tracked_power: str,
+    target: TransitionTargetSpec,
+) -> str:
+    if target["kind"] == "unit_at":
+        outcome = f"end the movement phase with your {target['unit_type']} in {target['location']}"
+    elif target["kind"] == "location_occupied_by":
+        outcome = f"end the movement phase with {tracked_power} occupying {target['location']}"
+    elif target["kind"] == "move_succeeded":
+        outcome = f"make the move from {target['from_location']} to {target['to_location']} succeed"
+    else:
+        outcome = f"make the target outcome happen at {target['location']}"
+    return (
+        f"You are {tracked_power}.\n"
+        "This is a target-execution Diplomacy movement-phase task.\n"
+        f"Your objective is to {outcome}.\n"
+        "No press is required in this environment.\n"
+        "Submit a complete legal order set for all of your current orderable units.\n"
+        "Success depends on the actual post-adjudication phase result.\n"
+        "Finish with DONE only after submitting orders."
+    )
+
+
+def _build_supported_target_task_prompt(
+    *,
+    tracked_power: str,
+    counterpart: str,
+    target: TransitionTargetSpec,
+) -> str:
+    outcome = _build_full_press_task_prompt(
+        tracked_power=tracked_power,
+        counterpart=counterpart,
+        target=target,
+    ).split("You must coordinate with", 1)[0]
+    return (
+        f"{outcome}"
+        f"You must coordinate with {counterpart}: DM them, read their reply after it arrives, "
+        "and request the exact support or hold order needed to make the target succeed.\n"
+        "Stay within the invalid-tool-call budget of 3 rejected tool calls.\n"
+        "Success depends on the actual post-adjudication phase result.\n"
+        "Finish with DONE only after submitting orders."
+    )
+
+
+def _build_cooperative_press_task_prompt(
+    *,
+    tracked_power: str,
+    counterpart: str,
+    target: TransitionTargetSpec,
+) -> str:
+    outcome = _build_full_press_task_prompt(
+        tracked_power=tracked_power,
+        counterpart=counterpart,
+        target=target,
+    ).split("You must coordinate with", 1)[0]
+    return (
+        f"{outcome}"
+        f"You must coordinate with {counterpart}: DM them, read their reply after it arrives, "
+        "then submit a complete legal order set.\n"
+        "Prefer one useful coordination message over repeated negotiation.\n"
+        "Stay within the invalid-tool-call budget of 3 rejected tool calls.\n"
+        "Success depends on the actual post-adjudication phase result.\n"
+        "Finish with DONE only after submitting orders."
+    )
+
+
 def _build_row(session: DiplomacySessionSpec) -> dict[str, Any]:
     tracked_contacts = list(session.contacts_map[session.tracked_power])
     info: DiplomacyRowInfo = {
@@ -434,6 +508,254 @@ def _find_support_candidate(
                         unit_type = tracked_order.split()[0]
                         return tracked_location, tracked_order, counterpart_location, counterpart_order, unit_type
     return None
+
+
+def _build_transition_target_from_order(
+    *,
+    tracked_power: str,
+    tracked_unit_type: str,
+    tracked_anchor_order: str,
+    rng: random.Random,
+) -> TransitionTargetSpec | None:
+    destination = _order_destination(tracked_anchor_order)
+    if destination is None:
+        return None
+    target_kind = rng.choice(["unit_at", "location_occupied_by"])
+    if target_kind == "unit_at":
+        return {
+            "kind": "unit_at",
+            "power": tracked_power,
+            "unit_type": tracked_unit_type,
+            "location": destination,
+        }
+    return {
+        "kind": "location_occupied_by",
+        "power": tracked_power,
+        "location": destination,
+    }
+
+
+def _target_execution_session(idx: int, rng: random.Random) -> DiplomacySessionSpec:
+    for _ in range(200):
+        game = _sample_reachable_movement_game(rng)
+        phase_name = game.get_current_phase()
+        if not _movement_phase_name(phase_name):
+            continue
+        orderable = game.get_orderable_locations()
+        tracked_candidates = [power for power, locations in orderable.items() if locations]
+        rng.shuffle(tracked_candidates)
+        for tracked_power in tracked_candidates:
+            non_tracked_powers = [power for power in STANDARD_POWERS if power != tracked_power]
+            tracked_locations = list(orderable.get(tracked_power, []))
+            rng.shuffle(tracked_locations)
+            for tracked_location in tracked_locations:
+                tracked_options = list(game.get_all_possible_orders().get(tracked_location, []))
+                rng.shuffle(tracked_options)
+                for tracked_anchor_order in tracked_options:
+                    destination = _order_destination(tracked_anchor_order)
+                    if destination is None:
+                        continue
+                    tracked_unit_type = tracked_anchor_order.split()[0]
+                    deterministic_orders = {
+                        power: _sample_complete_orders(game, power, rng, prefer_holds=True)
+                        for power in non_tracked_powers
+                    }
+                    tracked_orders = _sample_complete_orders(
+                        game,
+                        tracked_power,
+                        rng,
+                        fixed_orders={tracked_location: tracked_anchor_order},
+                        prefer_holds=True,
+                    )
+                    adjudication_game = _clone_game(game)
+                    for power, orders in deterministic_orders.items():
+                        adjudication_game.set_orders(power, orders)
+                    adjudication_game.set_orders(tracked_power, tracked_orders)
+                    adjudication_game.process()
+                    target_order = f"{tracked_unit_type} {destination}"
+                    if target_order not in adjudication_game.get_units(tracked_power):
+                        continue
+                    transition_target = _build_transition_target_from_order(
+                        tracked_power=tracked_power,
+                        tracked_unit_type=tracked_unit_type,
+                        tracked_anchor_order=tracked_anchor_order,
+                        rng=rng,
+                    )
+                    if transition_target is None:
+                        continue
+                    return DiplomacySessionSpec(
+                        session_id=f"target_execution_{idx:05d}_{rng.randint(1000, 9999)}",
+                        environment_kind="target_execution",
+                        tracked_power=tracked_power,
+                        relevant_powers=[],
+                        contacts_map=_default_contacts_map(),
+                        initial_phase=phase_name,
+                        initial_state=copy.deepcopy(game.get_state()),
+                        task_prompt=_build_target_execution_task_prompt(
+                            tracked_power=tracked_power,
+                            target=transition_target,
+                        ),
+                        actor_prompts={},
+                        required_interactions=[],
+                        transition_target=transition_target,
+                        deterministic_orders=deterministic_orders,
+                        task_config={
+                            "tracked_power": tracked_power,
+                            "phase_name": phase_name,
+                            "tracked_anchor_order": tracked_anchor_order,
+                            "planned_tracked_orders": list(tracked_orders),
+                        },
+                    )
+    raise RuntimeError("Unable to generate a target-execution session with a reachable target.")
+
+
+def _supported_target_session(idx: int, rng: random.Random) -> DiplomacySessionSpec:
+    for _ in range(200):
+        game = _sample_reachable_movement_game(rng)
+        phase_name = game.get_current_phase()
+        if not _movement_phase_name(phase_name):
+            continue
+        orderable = game.get_orderable_locations()
+        tracked_candidates = [power for power, locations in orderable.items() if locations]
+        if len(tracked_candidates) < 2:
+            continue
+        rng.shuffle(tracked_candidates)
+        for tracked_power in tracked_candidates:
+            counterpart_candidates = [power for power in STANDARD_POWERS if power != tracked_power and orderable.get(power)]
+            rng.shuffle(counterpart_candidates)
+            for counterpart in counterpart_candidates:
+                candidate = _find_support_candidate(
+                    game,
+                    tracked_power=tracked_power,
+                    counterpart=counterpart,
+                    rng=rng,
+                )
+                if candidate is None:
+                    continue
+                (
+                    tracked_location,
+                    tracked_anchor_order,
+                    counterpart_location,
+                    counterpart_anchor_order,
+                    tracked_unit_type,
+                ) = candidate
+                deterministic_orders = {
+                    power: _sample_complete_orders(game, power, rng, prefer_holds=True)
+                    for power in STANDARD_POWERS
+                    if power not in {tracked_power, counterpart}
+                }
+                tracked_orders = _sample_complete_orders(
+                    game,
+                    tracked_power,
+                    rng,
+                    fixed_orders={tracked_location: tracked_anchor_order},
+                    prefer_holds=True,
+                )
+                counterpart_orders = _sample_complete_orders(
+                    game,
+                    counterpart,
+                    rng,
+                    fixed_orders={counterpart_location: counterpart_anchor_order},
+                    prefer_holds=True,
+                )
+                adjudication_game = _clone_game(game)
+                for power, orders in deterministic_orders.items():
+                    adjudication_game.set_orders(power, orders)
+                adjudication_game.set_orders(tracked_power, tracked_orders)
+                adjudication_game.set_orders(counterpart, counterpart_orders)
+                adjudication_game.process()
+                destination = _order_destination(tracked_anchor_order)
+                if destination is None or f"{tracked_unit_type} {destination}" not in adjudication_game.get_units(tracked_power):
+                    continue
+                transition_target = _build_transition_target_from_order(
+                    tracked_power=tracked_power,
+                    tracked_unit_type=tracked_unit_type,
+                    tracked_anchor_order=tracked_anchor_order,
+                    rng=rng,
+                )
+                if transition_target is None:
+                    continue
+                objective_text = (
+                    f"Coordinate with {tracked_power} so their unit from {tracked_location} ends the phase in "
+                    f"{destination}. Submit {counterpart_anchor_order} if legal and hold your other units."
+                )
+                reply_template = _build_full_press_reply_template(
+                    objective_text=objective_text,
+                    anchor_orders=[counterpart_anchor_order],
+                )
+                actor_objective: RelevantActorObjectiveSpec = {
+                    "power": counterpart,
+                    "contact_required": True,
+                    "objective_text": objective_text,
+                    "anchor_orders": [counterpart_anchor_order],
+                    "reply_template": reply_template,
+                }
+                return DiplomacySessionSpec(
+                    session_id=f"supported_target_{idx:05d}_{rng.randint(1000, 9999)}",
+                    environment_kind="supported_target",
+                    tracked_power=tracked_power,
+                    relevant_powers=[counterpart],
+                    contacts_map=_default_contacts_map(),
+                    initial_phase=phase_name,
+                    initial_state=copy.deepcopy(game.get_state()),
+                    task_prompt=_build_supported_target_task_prompt(
+                        tracked_power=tracked_power,
+                        counterpart=counterpart,
+                        target=transition_target,
+                    ),
+                    actor_prompts={
+                        counterpart: _build_full_press_actor_prompt(
+                            tracked_power=tracked_power,
+                            objective=actor_objective,
+                        )
+                    },
+                    required_interactions=_initial_required_interactions(counterpart),
+                    transition_target=transition_target,
+                    relevant_actor_objectives=[actor_objective],
+                    deterministic_orders=deterministic_orders,
+                    task_config={
+                        "tracked_power": tracked_power,
+                        "counterpart_power": counterpart,
+                        "phase_name": phase_name,
+                        "tracked_anchor_order": tracked_anchor_order,
+                        "counterpart_anchor_order": counterpart_anchor_order,
+                        "planned_tracked_orders": list(tracked_orders),
+                        "planned_counterpart_orders": list(counterpart_orders),
+                    },
+                )
+    raise RuntimeError("Unable to generate a supported-target session with a cooperative target.")
+
+
+def _cooperative_press_session(idx: int, rng: random.Random) -> DiplomacySessionSpec:
+    session = _supported_target_session(idx, rng)
+    counterpart = session.relevant_powers[0]
+    objective = copy.deepcopy(session.relevant_actor_objectives[0])
+    objective["contact_required"] = False
+    return DiplomacySessionSpec(
+        session_id=f"cooperative_press_{idx:05d}_{rng.randint(1000, 9999)}",
+        environment_kind="cooperative_press",
+        tracked_power=session.tracked_power,
+        relevant_powers=session.relevant_powers,
+        contacts_map=session.contacts_map,
+        initial_phase=session.initial_phase,
+        initial_state=copy.deepcopy(session.initial_state),
+        task_prompt=_build_cooperative_press_task_prompt(
+            tracked_power=session.tracked_power,
+            counterpart=counterpart,
+            target=session.transition_target,
+        ),
+        actor_prompts={
+            counterpart: _build_full_press_actor_prompt(
+                tracked_power=session.tracked_power,
+                objective=objective,
+            )
+        },
+        required_interactions=list(session.required_interactions),
+        transition_target=copy.deepcopy(session.transition_target),
+        relevant_actor_objectives=[objective],
+        deterministic_orders={k: list(v) for k, v in session.deterministic_orders.items()},
+        task_config=dict(session.task_config),
+    )
 
 
 def _full_press_session(idx: int, rng: random.Random) -> DiplomacySessionSpec:
@@ -585,6 +907,33 @@ def build_full_press_sessions(
     return [_full_press_session(idx, rng) for idx in range(num_sessions)]
 
 
+def build_target_execution_sessions(
+    *,
+    num_sessions: int,
+    seed: int | None = None,
+) -> list[DiplomacySessionSpec]:
+    rng = random.Random(seed)
+    return [_target_execution_session(idx, rng) for idx in range(num_sessions)]
+
+
+def build_supported_target_sessions(
+    *,
+    num_sessions: int,
+    seed: int | None = None,
+) -> list[DiplomacySessionSpec]:
+    rng = random.Random(seed)
+    return [_supported_target_session(idx, rng) for idx in range(num_sessions)]
+
+
+def build_cooperative_press_sessions(
+    *,
+    num_sessions: int,
+    seed: int | None = None,
+) -> list[DiplomacySessionSpec]:
+    rng = random.Random(seed)
+    return [_cooperative_press_session(idx, rng) for idx in range(num_sessions)]
+
+
 def build_tool_accuracy_dataset(
     *,
     num_sessions: int,
@@ -602,4 +951,43 @@ def build_full_press_dataset(
 ) -> Dataset:
     return Dataset.from_list(
         [_build_row(session) for session in build_full_press_sessions(num_sessions=num_sessions, seed=seed)]
+    )
+
+
+def build_target_execution_dataset(
+    *,
+    num_sessions: int,
+    seed: int | None = None,
+) -> Dataset:
+    return Dataset.from_list(
+        [
+            _build_row(session)
+            for session in build_target_execution_sessions(num_sessions=num_sessions, seed=seed)
+        ]
+    )
+
+
+def build_supported_target_dataset(
+    *,
+    num_sessions: int,
+    seed: int | None = None,
+) -> Dataset:
+    return Dataset.from_list(
+        [
+            _build_row(session)
+            for session in build_supported_target_sessions(num_sessions=num_sessions, seed=seed)
+        ]
+    )
+
+
+def build_cooperative_press_dataset(
+    *,
+    num_sessions: int,
+    seed: int | None = None,
+) -> Dataset:
+    return Dataset.from_list(
+        [
+            _build_row(session)
+            for session in build_cooperative_press_sessions(num_sessions=num_sessions, seed=seed)
+        ]
     )

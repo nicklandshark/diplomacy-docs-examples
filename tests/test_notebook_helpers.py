@@ -77,6 +77,10 @@ def test_build_train_command_and_manifest_path() -> None:
     assert command[:4] == [
         sys.executable,
         "scripts/train_tinker_grpo_curriculum.py",
+        "--curriculum-preset",
+        "legacy_two_stage",
+    ]
+    assert command[4:6] == [
         "--model-name",
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
     ]

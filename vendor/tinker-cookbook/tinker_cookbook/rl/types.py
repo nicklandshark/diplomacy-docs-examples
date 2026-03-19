@@ -63,7 +63,8 @@ class SamplingRef:
     ``tinker.SamplingClient`` object across process or machine boundaries.
     """
 
-    sampler_path: str
+    sampler_path: str | None = None
+    base_model: str | None = None
     base_url: str | None = None
 
 

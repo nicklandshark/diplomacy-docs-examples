@@ -30,11 +30,18 @@ from tinker_cookbook.tool_use.tools import handle_tool_call
 from tinker_cookbook.tool_use.types import Tool, ToolInput, ToolResult
 
 import environments.full_press as full_press_env
+import environments.cooperative_press as cooperative_press_env
+import environments.supported_target as supported_target_env
+import environments.target_execution as target_execution_env
 import environments.tool_accuracy as tool_accuracy_env
 import rlm_backend as backend
 from data_generator import (
+    EnvironmentKind,
     STANDARD_POWERS,
+    build_cooperative_press_dataset,
     build_full_press_dataset,
+    build_supported_target_dataset,
+    build_target_execution_dataset,
     build_tool_accuracy_dataset,
 )
 from rlm_chatroom_backend import (
@@ -58,9 +65,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_HTTP_REFERER = "https://local.codex"
 DEFAULT_OPENROUTER_X_TITLE = "diplomacy-grpo"
-
-EnvironmentKind = Literal["tool_accuracy", "full_press"]
-
 
 @chz.chz
 class OpenRouterHeaders:
@@ -163,6 +167,12 @@ def _make_actor_client(
 def _get_rubric_for_environment(environment_kind: EnvironmentKind) -> vf.Rubric:
     if environment_kind == "tool_accuracy":
         return tool_accuracy_env.build_rubric()
+    if environment_kind == "target_execution":
+        return target_execution_env.build_rubric()
+    if environment_kind == "supported_target":
+        return supported_target_env.build_rubric()
+    if environment_kind == "cooperative_press":
+        return cooperative_press_env.build_rubric()
     return full_press_env.build_rubric()
 
 
@@ -1275,6 +1285,45 @@ class DiplomacyDatasetBuilder(RLDatasetBuilder):
             ).to_list()
             eval_rows = (
                 build_tool_accuracy_dataset(
+                    num_sessions=self.num_eval_examples,
+                    seed=self.eval_seed,
+                ).to_list()
+                if self.num_eval_examples > 0
+                else []
+            )
+        elif self.environment_kind == "target_execution":
+            train_rows = build_target_execution_dataset(
+                num_sessions=self.num_train_examples,
+                seed=self.train_seed,
+            ).to_list()
+            eval_rows = (
+                build_target_execution_dataset(
+                    num_sessions=self.num_eval_examples,
+                    seed=self.eval_seed,
+                ).to_list()
+                if self.num_eval_examples > 0
+                else []
+            )
+        elif self.environment_kind == "supported_target":
+            train_rows = build_supported_target_dataset(
+                num_sessions=self.num_train_examples,
+                seed=self.train_seed,
+            ).to_list()
+            eval_rows = (
+                build_supported_target_dataset(
+                    num_sessions=self.num_eval_examples,
+                    seed=self.eval_seed,
+                ).to_list()
+                if self.num_eval_examples > 0
+                else []
+            )
+        elif self.environment_kind == "cooperative_press":
+            train_rows = build_cooperative_press_dataset(
+                num_sessions=self.num_train_examples,
+                seed=self.train_seed,
+            ).to_list()
+            eval_rows = (
+                build_cooperative_press_dataset(
                     num_sessions=self.num_eval_examples,
                     seed=self.eval_seed,
                 ).to_list()

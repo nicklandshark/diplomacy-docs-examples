@@ -476,7 +476,11 @@ class Config:
 
 
 def _build_sampling_ref(cfg: Config, sampler_path: str) -> SamplingRef:
-    return SamplingRef(sampler_path=sampler_path, base_url=cfg.base_url)
+    return SamplingRef(
+        sampler_path=sampler_path,
+        base_model=cfg.model_name,
+        base_url=cfg.base_url,
+    )
 
 
 def _builder_requires_in_process_rollout(env_group_builder: EnvGroupBuilder) -> bool:

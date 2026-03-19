@@ -14,6 +14,7 @@ from tinker_training.curriculum import (
     DEFAULT_OPENROUTER_MODEL,
     DEFAULT_WANDB_PROJECT,
 )
+from tinker_training.prompt_family import DEFAULT_PROMPT_FAMILY_DIR
 
 ENV_VAR_PURPOSES = {
     "TINKER_API_KEY": "Authenticates Tinker training and sampler checkpoint access.",
@@ -43,10 +44,12 @@ def make_default_run_name(model_name: str) -> str:
 
 def notebook_defaults() -> dict[str, Any]:
     return {
+        "curriculum_preset": "legacy_two_stage",
         "model_name": DEFAULT_MODEL_NAME,
         "log_root": DEFAULT_LOG_ROOT,
         "wandb_project": DEFAULT_WANDB_PROJECT,
         "tracked_instruction_block_path": "",
+        "prompt_family_dir": str(DEFAULT_PROMPT_FAMILY_DIR),
         "openrouter_model": DEFAULT_OPENROUTER_MODEL,
         "modal_app_name": "diplomacy-grpo-rollouts",
         "modal_timeout_seconds": 900,
@@ -55,6 +58,7 @@ def notebook_defaults() -> dict[str, Any]:
         "save_every": 10,
         "eval_every": 5,
         "num_groups_to_log": 2,
+        "learning_rate": 2e-5,
         "lora_rank": 32,
         "stage1_train_examples": 64,
         "stage1_eval_examples": 8,
@@ -78,9 +82,11 @@ def notebook_defaults() -> dict[str, Any]:
 def build_train_command(
     *,
     script_path: Path,
+    curriculum_preset: str = "legacy_two_stage",
     model_name: str,
     log_root: str,
     wandb_project: str,
+    prompt_family_dir: str | None = None,
     openrouter_model: str,
     modal_app_name: str,
     modal_timeout_seconds: int,
@@ -89,6 +95,7 @@ def build_train_command(
     save_every: int,
     eval_every: int,
     num_groups_to_log: int,
+    learning_rate: float = 2e-5,
     stage1_train_examples: int,
     stage1_eval_examples: int,
     stage1_batch_size: int,
@@ -116,6 +123,8 @@ def build_train_command(
     command = [
         python_executable or sys.executable,
         str(script_path),
+        "--curriculum-preset",
+        curriculum_preset,
         "--model-name",
         model_name,
         "--log-root",
@@ -138,6 +147,10 @@ def build_train_command(
         str(int(eval_every)),
         "--num-groups-to-log",
         str(int(num_groups_to_log)),
+        "--learning-rate",
+        str(float(learning_rate)),
+        "--lora-rank",
+        str(int(lora_rank)),
         "--stage1-train-examples",
         str(int(stage1_train_examples)),
         "--stage1-eval-examples",
@@ -175,6 +188,8 @@ def build_train_command(
         "--stage2-lora-rank",
         str(int(lora_rank)),
     ]
+    if prompt_family_dir and prompt_family_dir.strip():
+        command.extend(["--prompt-family-dir", prompt_family_dir.strip()])
     if enable_thinking:
         command.append("--enable-thinking")
     if renderer_name and renderer_name.strip():

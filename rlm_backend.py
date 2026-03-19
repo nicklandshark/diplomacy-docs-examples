@@ -1484,6 +1484,35 @@ async def transition_target_satisfied_metric(state: State) -> float:
     ) else 0.0
 
 
+async def transition_target_without_press_metric(state: State) -> float:
+    budget_ok = await invalid_tool_budget_pass_metric(state) >= 1.0
+    tracked_ok = await _tracked_submission_gate(state)
+    if not (budget_ok and tracked_ok):
+        return 0.0
+    info = state.get("info", {})
+    if not isinstance(info, dict):
+        return 0.0
+    target = info.get("transition_target")
+    if not isinstance(target, dict):
+        return 0.0
+    session_id = str(state.get("diplomacy_session_id", ""))
+    runtime = _SESSION_REGISTRY.get(session_id) if session_id else None
+    if runtime is None or runtime.game is None or runtime.initial_state is None:
+        return 0.0
+    adjudication_game = _new_game_from_state(runtime.initial_state)
+    for power in STANDARD_POWERS:
+        submission = runtime.current_submissions.get(power)
+        if submission is not None:
+            adjudication_game.set_orders(power, submission)
+    phase_data = adjudication_game.process()
+    return 1.0 if _evaluate_transition_target(
+        target=cast(TransitionTargetSpec, target),
+        pre_state=runtime.initial_state,
+        post_state=adjudication_game.get_state(),
+        results=cast(dict[str, Any], phase_data.results),
+    ) else 0.0
+
+
 async def relevant_actor_submission_metric(state: State) -> float:
     return 1.0 if await _relevant_actor_gate(state) else 0.0
 
