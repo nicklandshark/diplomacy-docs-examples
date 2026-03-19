@@ -16,6 +16,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from tinker_training.curriculum import (
     CurriculumConfig,
+    DEFAULT_LOG_ROOT,
+    DEFAULT_MODEL_NAME,
+    DEFAULT_OPENROUTER_API_KEY_ENV_VAR,
+    DEFAULT_OPENROUTER_BASE_URL,
+    DEFAULT_OPENROUTER_MODEL,
+    DEFAULT_WANDB_PROJECT,
     ModalRolloutConfig,
     StageSpec,
     run_curriculum,
@@ -32,64 +38,99 @@ logger = logging.getLogger(__name__)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train a Tinker GRPO curriculum for Diplomacy with optional Modal-isolated rollouts."
+        description="Train a Tinker GRPO curriculum for Diplomacy with Modal-isolated rollouts.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--model-name", default="Qwen/Qwen3.5-27B")
-    parser.add_argument("--renderer-name", default=None)
-    parser.add_argument("--enable-thinking", action="store_true")
-    parser.add_argument("--log-root", default="~/tinker-runs/diplomacy-grpo")
-    parser.add_argument("--run-name", default=None)
-    parser.add_argument("--wandb-project", default="diplomacy-grpo")
-    parser.add_argument("--initial-checkpoint-path", default=None)
-
-    parser.add_argument("--rollout-backend", choices=["local", "modal"], default="modal")
-    parser.add_argument("--modal-app-name", default="diplomacy-grpo-rollouts")
-    parser.add_argument("--modal-timeout-seconds", type=int, default=900)
-    parser.add_argument("--modal-cpu", type=float, default=2.0)
-    parser.add_argument("--modal-memory-mb", type=int, default=4096)
     parser.add_argument(
-        "--disable-local-fallback-on-infra-failure",
+        "--model-name",
+        default=DEFAULT_MODEL_NAME,
+        help="Base model to fine-tune with Tinker.",
+    )
+    parser.add_argument(
+        "--renderer-name",
+        default=None,
+        help="Optional explicit renderer override. Leave unset to use the recommended renderer for the model.",
+    )
+    parser.add_argument(
+        "--enable-thinking",
         action="store_true",
-        help="Disable the one-shot local fallback when a Modal transport failure occurs.",
+        help="Use the thinking-enabled recommended renderer when the model supports it.",
+    )
+    parser.add_argument(
+        "--log-root",
+        default=DEFAULT_LOG_ROOT,
+        help="Root directory that will contain the curriculum manifest and per-stage logs.",
+    )
+    parser.add_argument(
+        "--run-name",
+        default=None,
+        help="Optional fixed run name. Leave unset to generate one from the model name and timestamp.",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        default=DEFAULT_WANDB_PROJECT,
+        help="Weights & Biases project for the single curriculum training run.",
+    )
+    parser.add_argument(
+        "--initial-checkpoint-path",
+        default=None,
+        help="Optional checkpoint to warm-start from when no local curriculum state exists yet.",
     )
 
-    parser.add_argument("--openrouter-model", default="google/gemini-3-flash-preview")
-    parser.add_argument("--openrouter-base-url", default="https://openrouter.ai/api/v1")
-    parser.add_argument("--openrouter-api-key-env-var", default="OPENROUTER_API_KEY")
-    parser.add_argument("--http-referer", default="https://local.codex")
-    parser.add_argument("--x-title", default="diplomacy-grpo")
-    parser.add_argument("--actor-max-turns", type=int, default=18)
-    parser.add_argument("--session-timeout-seconds", type=float, default=90.0)
-    parser.add_argument("--default-idle-sleep-seconds", type=float, default=0.5)
-    parser.add_argument("--max-message-length", type=int, default=2000)
-    parser.add_argument("--save-every", type=int, default=10)
-    parser.add_argument("--eval-every", type=int, default=5)
-    parser.add_argument("--num-groups-to-log", type=int, default=2)
-    parser.add_argument("--disable-rollout-json-export", action="store_true")
+    parser.add_argument("--modal-app-name", default="diplomacy-grpo-rollouts", help="Modal app name used for remote rollout workers.")
+    parser.add_argument("--modal-timeout-seconds", type=int, default=900, help="Per-trajectory Modal timeout.")
+    parser.add_argument("--modal-cpu", type=float, default=2.0, help="vCPU request for each Modal rollout worker.")
+    parser.add_argument("--modal-memory-mb", type=int, default=4096, help="Memory request for each Modal rollout worker in MB.")
 
-    parser.add_argument("--stage1-train-examples", type=int, default=128)
-    parser.add_argument("--stage1-eval-examples", type=int, default=16)
-    parser.add_argument("--stage1-batch-size", type=int, default=16)
-    parser.add_argument("--stage1-group-size", type=int, default=4)
-    parser.add_argument("--stage1-max-tokens", type=int, default=256)
-    parser.add_argument("--stage1-max-turns", type=int, default=14)
-    parser.add_argument("--stage1-max-trajectory-tokens", type=int, default=8192)
-    parser.add_argument("--stage1-train-seed", type=int, default=21)
-    parser.add_argument("--stage1-eval-seed", type=int, default=10_021)
-    parser.add_argument("--stage1-learning-rate", type=float, default=3e-5)
-    parser.add_argument("--stage1-lora-rank", type=int, default=32)
+    parser.add_argument(
+        "--openrouter-model",
+        default=DEFAULT_OPENROUTER_MODEL,
+        help="Model used for the non-trained counterpart powers.",
+    )
+    parser.add_argument(
+        "--openrouter-base-url",
+        default=DEFAULT_OPENROUTER_BASE_URL,
+        help="OpenRouter-compatible base URL for the counterpart actors.",
+    )
+    parser.add_argument(
+        "--openrouter-api-key-env-var",
+        default=DEFAULT_OPENROUTER_API_KEY_ENV_VAR,
+        help="Environment variable that stores the OpenRouter API key.",
+    )
+    parser.add_argument("--http-referer", default="https://local.codex", help="HTTP-Referer header sent to OpenRouter.")
+    parser.add_argument("--x-title", default="diplomacy-grpo", help="X-Title header sent to OpenRouter.")
+    parser.add_argument("--actor-max-turns", type=int, default=18, help="Maximum turns allowed for each background actor trajectory.")
+    parser.add_argument("--session-timeout-seconds", type=float, default=90.0, help="Per-environment wall clock timeout.")
+    parser.add_argument("--default-idle-sleep-seconds", type=float, default=0.5, help="Default polling interval used by wait().")
+    parser.add_argument("--max-message-length", type=int, default=2000, help="Maximum press message length accepted by the tool executor.")
+    parser.add_argument("--save-every", type=int, default=10, help="Save a resumable state checkpoint every N global batches.")
+    parser.add_argument("--eval-every", type=int, default=5, help="Run evaluation every N global batches.")
+    parser.add_argument("--num-groups-to-log", type=int, default=2, help="How many rollout groups per batch get rich HTML/logtree output.")
+    parser.add_argument("--disable-rollout-json-export", action="store_true", help="Disable JSONL rollout summary export.")
 
-    parser.add_argument("--stage2-train-examples", type=int, default=96)
-    parser.add_argument("--stage2-eval-examples", type=int, default=16)
-    parser.add_argument("--stage2-batch-size", type=int, default=12)
-    parser.add_argument("--stage2-group-size", type=int, default=4)
-    parser.add_argument("--stage2-max-tokens", type=int, default=384)
-    parser.add_argument("--stage2-max-turns", type=int, default=20)
-    parser.add_argument("--stage2-max-trajectory-tokens", type=int, default=12288)
-    parser.add_argument("--stage2-train-seed", type=int, default=37)
-    parser.add_argument("--stage2-eval-seed", type=int, default=10_037)
-    parser.add_argument("--stage2-learning-rate", type=float, default=2e-5)
-    parser.add_argument("--stage2-lora-rank", type=int, default=32)
+    parser.add_argument("--stage1-train-examples", type=int, default=64, help="Number of training sessions sampled for stage 1 (`tool_accuracy`).")
+    parser.add_argument("--stage1-eval-examples", type=int, default=8, help="Number of evaluation sessions sampled for stage 1.")
+    parser.add_argument("--stage1-batch-size", type=int, default=16, help="Number of prompt groups per optimizer batch in stage 1.")
+    parser.add_argument("--stage1-group-size", type=int, default=4, help="Number of trajectories sampled per prompt group in stage 1.")
+    parser.add_argument("--stage1-max-tokens", type=int, default=256, help="Maximum model output tokens per trajectory for stage 1.")
+    parser.add_argument("--stage1-max-turns", type=int, default=14, help="Maximum environment turns per trajectory for stage 1.")
+    parser.add_argument("--stage1-max-trajectory-tokens", type=int, default=8192, help="Hard cap on full trajectory token budget for stage 1.")
+    parser.add_argument("--stage1-train-seed", type=int, default=21, help="Training dataset seed for stage 1.")
+    parser.add_argument("--stage1-eval-seed", type=int, default=10_021, help="Evaluation dataset seed for stage 1.")
+    parser.add_argument("--stage1-learning-rate", type=float, default=3e-5, help="Learning rate used while stage 1 is active.")
+    parser.add_argument("--stage1-lora-rank", type=int, default=32, help="LoRA rank. Must match stage 2 because the curriculum now uses one Tinker run.")
+
+    parser.add_argument("--stage2-train-examples", type=int, default=48, help="Number of training sessions sampled for stage 2 (`full_press`).")
+    parser.add_argument("--stage2-eval-examples", type=int, default=8, help="Number of evaluation sessions sampled for stage 2.")
+    parser.add_argument("--stage2-batch-size", type=int, default=12, help="Number of prompt groups per optimizer batch in stage 2.")
+    parser.add_argument("--stage2-group-size", type=int, default=4, help="Number of trajectories sampled per prompt group in stage 2.")
+    parser.add_argument("--stage2-max-tokens", type=int, default=384, help="Maximum model output tokens per trajectory for stage 2.")
+    parser.add_argument("--stage2-max-turns", type=int, default=20, help="Maximum environment turns per trajectory for stage 2.")
+    parser.add_argument("--stage2-max-trajectory-tokens", type=int, default=12288, help="Hard cap on full trajectory token budget for stage 2.")
+    parser.add_argument("--stage2-train-seed", type=int, default=37, help="Training dataset seed for stage 2.")
+    parser.add_argument("--stage2-eval-seed", type=int, default=10_037, help="Evaluation dataset seed for stage 2.")
+    parser.add_argument("--stage2-learning-rate", type=float, default=2e-5, help="Learning rate used while stage 2 is active.")
+    parser.add_argument("--stage2-lora-rank", type=int, default=32, help="LoRA rank. Must match stage 1 because the curriculum now uses one Tinker run.")
     return parser.parse_args()
 
 
@@ -153,13 +194,11 @@ def build_config(args: argparse.Namespace) -> CurriculumConfig:
         num_groups_to_log=args.num_groups_to_log,
         rollout_json_export=not args.disable_rollout_json_export,
         stages=build_stages(args),
-        rollout_backend=args.rollout_backend,
         modal_rollout=ModalRolloutConfig(
             app_name=args.modal_app_name,
             timeout_seconds=args.modal_timeout_seconds,
             cpu=args.modal_cpu,
             memory_mb=args.modal_memory_mb,
-            local_fallback_on_infra_failure=not args.disable_local_fallback_on_infra_failure,
         ),
         initial_checkpoint_path=args.initial_checkpoint_path,
     )

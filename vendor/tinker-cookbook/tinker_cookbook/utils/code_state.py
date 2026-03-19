@@ -65,23 +65,29 @@ def code_state(modules: Sequence[str | ModuleType] = ("tinker_cookbook",)) -> st
                 text=True,
             )
             return Path(completed.stdout.strip()).resolve()
-        except subprocess.CalledProcessError:
+        except (FileNotFoundError, subprocess.CalledProcessError):
             return None
 
     def git_rev(head_dir: Path) -> str:
-        completed = subprocess.run(
-            ["git", "-C", str(head_dir), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            completed = subprocess.run(
+                ["git", "-C", str(head_dir), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            return "GIT_UNAVAILABLE"
         return completed.stdout.strip()
 
     def git_diff_vs_head(head_dir: Path) -> str:
         """Return a repo-wide unified diff of working tree + index (staged and
         unstaged) relative to HEAD."""
         args = ["git", "-C", str(head_dir), "diff", "--no-color", "HEAD"]
-        completed = subprocess.run(args, check=False, capture_output=True, text=True)
+        try:
+            completed = subprocess.run(args, check=False, capture_output=True, text=True)
+        except FileNotFoundError:
+            return ""
         return completed.stdout
 
     sections: list[str] = []

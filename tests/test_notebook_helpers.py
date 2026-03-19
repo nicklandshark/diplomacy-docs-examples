@@ -8,6 +8,7 @@ from tinker_training.notebook_helpers import (
     format_missing_required_env_message,
     get_process_state,
     launch_once,
+    notebook_defaults,
     preflight_env,
     resolve_manifest_path,
 )
@@ -39,8 +40,7 @@ class _FakePopenFactory:
 def test_build_train_command_and_manifest_path() -> None:
     command = build_train_command(
         script_path=Path("scripts/train_tinker_grpo_curriculum.py"),
-        model_name="Qwen/Qwen3.5-27B",
-        rollout_backend="modal",
+        model_name="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         log_root="~/runs",
         wandb_project="demo",
         openrouter_model="google/gemini-3-flash-preview",
@@ -48,13 +48,27 @@ def test_build_train_command_and_manifest_path() -> None:
         modal_timeout_seconds=123,
         modal_cpu=2.0,
         modal_memory_mb=4096,
+        save_every=10,
+        eval_every=5,
+        num_groups_to_log=2,
         stage1_train_examples=10,
+        stage1_eval_examples=4,
+        stage1_batch_size=2,
         stage1_group_size=2,
+        stage1_max_tokens=64,
+        stage1_max_turns=8,
         stage1_train_seed=1,
+        stage1_learning_rate=3e-5,
         stage2_train_examples=20,
+        stage2_eval_examples=6,
+        stage2_batch_size=4,
         stage2_group_size=4,
+        stage2_max_tokens=96,
+        stage2_max_turns=12,
         stage2_train_seed=2,
-        renderer_name="qwen3_5_disable_thinking",
+        stage2_learning_rate=2e-5,
+        lora_rank=32,
+        renderer_name="qwen3_disable_thinking",
         run_name="demo-run",
         initial_checkpoint_path="checkpoint://start",
     )
@@ -63,7 +77,7 @@ def test_build_train_command_and_manifest_path() -> None:
         sys.executable,
         "scripts/train_tinker_grpo_curriculum.py",
         "--model-name",
-        "Qwen/Qwen3.5-27B",
+        "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
     ]
     assert "--renderer-name" in command
     assert "--run-name" in command
@@ -71,6 +85,15 @@ def test_build_train_command_and_manifest_path() -> None:
     assert resolve_manifest_path(log_root="~/runs", run_name="demo-run", manifest_override=None).as_posix().endswith(
         "demo-run/curriculum_manifest.json"
     )
+
+
+def test_notebook_defaults_use_reduced_rollout_counts() -> None:
+    defaults = notebook_defaults()
+
+    assert defaults["stage1_train_examples"] == 64
+    assert defaults["stage1_eval_examples"] == 8
+    assert defaults["stage2_train_examples"] == 48
+    assert defaults["stage2_eval_examples"] == 8
 
 
 def test_launch_once_is_idempotent_per_button_event(tmp_path) -> None:

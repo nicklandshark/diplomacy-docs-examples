@@ -617,11 +617,15 @@ dependencies = [
     { name = "marimo" },
     { name = "modal" },
     { name = "openai" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
     { name = "tinker" },
     { name = "tinker-cookbook", extra = ["verifiers", "wandb"] },
     { name = "verifiers" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
 ]
 
 [package.metadata]
@@ -631,11 +635,15 @@ requires-dist = [
     { name = "marimo" },
     { name = "modal", specifier = ">=1.3.1" },
     { name = "openai", specifier = ">=1.0.0" },
-    { name = "pytest", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "tinker", specifier = ">=0.9.0" },
     { name = "tinker-cookbook", extras = ["wandb", "verifiers"], editable = "vendor/tinker-cookbook" },
     { name = "verifiers", specifier = ">=0.1.9,<0.1.10" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
 ]
 
 [[package]]
@@ -3189,7 +3197,6 @@ dependencies = [
     { name = "numpy" },
     { name = "pillow" },
     { name = "pylatexenc" },
-    { name = "pytest" },
     { name = "rich" },
     { name = "scipy" },
     { name = "sympy" },
@@ -3233,8 +3240,7 @@ requires-dist = [
     { name = "pillow" },
     { name = "pylatexenc" },
     { name = "pyright", marker = "extra == 'dev'" },
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
     { name = "rich" },
     { name = "ruff", marker = "extra == 'dev'" },

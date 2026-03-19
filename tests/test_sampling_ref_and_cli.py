@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 
-from scripts.train_tinker_grpo_curriculum import build_config
+from scripts.train_tinker_grpo_curriculum import build_config, parse_args
 from tinker_cookbook.rl import train as rl_train
 
 
@@ -68,19 +69,17 @@ def test_save_checkpoint_returns_sampling_ref() -> None:
 
 def test_cli_builds_modal_curriculum_config() -> None:
     args = argparse.Namespace(
-        model_name="Qwen/Qwen3.5-27B",
+        model_name="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         renderer_name=None,
         enable_thinking=False,
         log_root="~/tinker-runs/diplomacy-grpo",
         run_name="test-run",
         wandb_project="diplomacy-grpo",
         initial_checkpoint_path=None,
-        rollout_backend="modal",
         modal_app_name="rollout-app",
         modal_timeout_seconds=321,
         modal_cpu=3.0,
         modal_memory_mb=8192,
-        disable_local_fallback_on_infra_failure=False,
         openrouter_model="google/gemini-3-flash-preview",
         openrouter_base_url="https://openrouter.ai/api/v1",
         openrouter_api_key_env_var="OPENROUTER_API_KEY",
@@ -119,10 +118,21 @@ def test_cli_builds_modal_curriculum_config() -> None:
     )
 
     config = build_config(args)
-    assert config.rollout_backend == "modal"
     assert config.modal_rollout.app_name == "rollout-app"
     assert config.modal_rollout.timeout_seconds == 321
     assert config.modal_rollout.cpu == 3.0
+    assert config.renderer_name == "qwen3_disable_thinking"
     assert len(config.stages) == 2
     assert config.stages[0].name == "stage1_tool_accuracy"
     assert config.stages[1].name == "stage2_full_press"
+
+
+def test_cli_default_rollout_counts_are_reduced(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["train_tinker_grpo_curriculum.py"])
+
+    args = parse_args()
+
+    assert args.stage1_train_examples == 64
+    assert args.stage1_eval_examples == 8
+    assert args.stage2_train_examples == 48
+    assert args.stage2_eval_examples == 8

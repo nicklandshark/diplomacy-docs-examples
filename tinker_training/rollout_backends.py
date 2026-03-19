@@ -24,6 +24,7 @@ try:
 except ImportError:  # pragma: no cover - optional dependency at import time
     modal = None
 
+from tinker_training.modal_image import rollout_runtime_image
 from tinker_cookbook.completers import TinkerTokenCompleter, TokensWithLogprobs
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.rl.types import SamplingRef, Trajectory, Transition
@@ -219,27 +220,7 @@ async def _execute_rollout_request(request: TrajectoryRolloutRequest) -> Traject
 def _default_modal_image() -> "modal.Image":
     if modal is None:  # pragma: no cover - guarded by caller
         raise RuntimeError("modal is not installed")
-
-    return (
-        modal.Image.debian_slim(python_version="3.12")
-        .add_local_dir(
-            str(REPO_ROOT),
-            "/root/project",
-            copy=True,
-            ignore=[".git", ".venv", "__pycache__", ".tmp"],
-        )
-        .pip_install(
-            "datasets>=2.0.0",
-            "diplomacy==1.1.2",
-            "openai>=1.0.0",
-            "tinker>=0.9.0",
-            "verifiers>=0.1.9,<0.1.10",
-        )
-        .run_commands(
-            "cd /root/project && pip install -e 'vendor/tinker-cookbook[wandb,verifiers]'",
-            env={"PYTHONPATH": "/root/project:/root/project/vendor/tinker-cookbook"},
-        )
-    )
+    return rollout_runtime_image()
 
 
 def _modal_secret_from_env() -> "modal.Secret | None":
@@ -257,66 +238,6 @@ def _modal_secret_from_env() -> "modal.Secret | None":
     return modal.Secret.from_dict(env_dict) if env_dict else None
 
 
-def _is_infrastructure_failure(exc: BaseException) -> bool:
-    message = str(exc).lower()
-    type_name = type(exc).__name__.lower()
-    infra_markers = (
-        "timeout",
-        "temporarily unavailable",
-        "connection",
-        "transport",
-        "grpc",
-        "network",
-        "app is not running",
-    )
-    return any(marker in message for marker in infra_markers) or "modal" in type_name
-
-
-@dataclass
-class LocalTrajectorySandboxRunner:
-    backend_name: str = "local"
-    call_count: int = 0
-    failure_count: int = 0
-    _pending_call_count: int = field(default=0, init=False, repr=False)
-    _pending_failure_count: int = field(default=0, init=False, repr=False)
-
-    async def start(self) -> None:
-        return None
-
-    async def run_trajectory(self, request: TrajectoryRolloutRequest) -> TrajectoryRolloutResult:
-        self.call_count += 1
-        self._pending_call_count += 1
-        result = await _execute_rollout_request(request)
-        if result.failure_kind is not None:
-            self.failure_count += 1
-            self._pending_failure_count += 1
-        return result
-
-    async def aclose(self) -> None:
-        return None
-
-    def summary(self) -> dict[str, Any]:
-        return {
-            "backend": self.backend_name,
-            "call_count": self.call_count,
-            "failure_count": self.failure_count,
-            "retry_count": 0,
-        }
-
-    def snapshot_metrics(self, reset: bool = True) -> dict[str, float]:
-        metrics = {
-            f"rollout/backend_{self.backend_name}": 1.0,
-            "rollout/runner_call_count": float(self._pending_call_count),
-            "rollout/runner_failure_count": float(self._pending_failure_count),
-            "rollout/runner_retry_count": 0.0,
-            "rollout/runner_remote_wall_time_seconds": 0.0,
-        }
-        if reset:
-            self._pending_call_count = 0
-            self._pending_failure_count = 0
-        return metrics
-
-
 @dataclass
 class ModalTrajectorySandboxRunner:
     app_name: str = "diplomacy-grpo-rollouts"
@@ -326,24 +247,16 @@ class ModalTrajectorySandboxRunner:
     single_use_containers: bool = True
     max_inputs: int = 1
     retries: int = 0
-    local_fallback_on_infra_failure: bool = True
     backend_name: str = "modal"
     call_count: int = 0
     failure_count: int = 0
-    retry_count: int = 0
     remote_wall_time_seconds: float = 0.0
     _app: Any = field(default=None, init=False, repr=False)
     _remote_rollout_fn: Any = field(default=None, init=False, repr=False)
     _app_run_ctx: Any = field(default=None, init=False, repr=False)
-    _local_fallback: LocalTrajectorySandboxRunner = field(
-        default_factory=LocalTrajectorySandboxRunner,
-        init=False,
-        repr=False,
-    )
     _startup_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _pending_call_count: int = field(default=0, init=False, repr=False)
     _pending_failure_count: int = field(default=0, init=False, repr=False)
-    _pending_retry_count: int = field(default=0, init=False, repr=False)
     _pending_remote_wall_time_seconds: float = field(default=0.0, init=False, repr=False)
 
     async def start(self) -> None:
@@ -366,8 +279,6 @@ class ModalTrajectorySandboxRunner:
                 memory=self.memory_mb,
                 retries=self.retries,
                 single_use_containers=self.single_use_containers,
-                max_inputs=self.max_inputs,
-                include_source=True,
                 env={"PYTHONPATH": "/root/project:/root/project/vendor/tinker-cookbook"},
                 secrets=secrets,
             )(_execute_rollout_request)
@@ -403,13 +314,6 @@ class ModalTrajectorySandboxRunner:
             elapsed = time.time() - started_at
             self.remote_wall_time_seconds += elapsed
             self._pending_remote_wall_time_seconds += elapsed
-            if self.local_fallback_on_infra_failure and _is_infrastructure_failure(exc):
-                self.retry_count += 1
-                self._pending_retry_count += 1
-                fallback = await self._local_fallback.run_trajectory(request)
-                fallback.metrics["rollout/local_fallback_retry"] = 1
-                fallback.remote_metadata["fallback_reason"] = str(exc)
-                return fallback
             raise
 
     async def aclose(self) -> None:
@@ -419,14 +323,12 @@ class ModalTrajectorySandboxRunner:
                 self._app_run_ctx = None
             self._remote_rollout_fn = None
             self._app = None
-        await self._local_fallback.aclose()
 
     def summary(self) -> dict[str, Any]:
         return {
             "backend": self.backend_name,
             "call_count": self.call_count,
             "failure_count": self.failure_count,
-            "retry_count": self.retry_count,
             "remote_wall_time_seconds": self.remote_wall_time_seconds,
             "timeout_seconds": self.timeout_seconds,
             "cpu": self.cpu,
@@ -441,12 +343,10 @@ class ModalTrajectorySandboxRunner:
             f"rollout/backend_{self.backend_name}": 1.0,
             "rollout/runner_call_count": float(self._pending_call_count),
             "rollout/runner_failure_count": float(self._pending_failure_count),
-            "rollout/runner_retry_count": float(self._pending_retry_count),
             "rollout/runner_remote_wall_time_seconds": self._pending_remote_wall_time_seconds,
         }
         if reset:
             self._pending_call_count = 0
             self._pending_failure_count = 0
-            self._pending_retry_count = 0
             self._pending_remote_wall_time_seconds = 0.0
         return metrics

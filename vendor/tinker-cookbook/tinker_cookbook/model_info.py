@@ -98,6 +98,22 @@ def get_gpt_oss_info() -> dict[str, ModelAttributes]:
 
 
 @cache
+def get_nvidia_info() -> dict[str, ModelAttributes]:
+    org = "nvidia"
+    return {
+        # Nemotron 3 Nano uses a Qwen-style chat template, so we reuse the
+        # Qwen 3 renderer family here.
+        "NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": ModelAttributes(
+            org,
+            "3",
+            "30B-A3B",
+            True,
+            _QWEN3,
+        ),
+    }
+
+
+@cache
 def get_moonshot_info() -> dict[str, ModelAttributes]:
     org = "moonshotai"
     return {
@@ -118,6 +134,8 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         return get_deepseek_info()[model_version_full]
     elif org == "openai":
         return get_gpt_oss_info()[model_version_full]
+    elif org == "nvidia":
+        return get_nvidia_info()[model_version_full]
     elif org == "moonshotai":
         return get_moonshot_info()[model_version_full]
     else:

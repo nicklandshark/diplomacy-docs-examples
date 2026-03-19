@@ -48,7 +48,6 @@ from rlm_chatroom_backend import (
     _render_message_text,
 )
 from tinker_training.rollout_backends import (
-    LocalTrajectorySandboxRunner,
     TrajectoryRolloutRequest,
     deserialize_trajectory,
     get_trajectory_runner,
@@ -101,12 +100,10 @@ class BuiltDiplomacyEnv:
     state: dict[str, Any]
 
 
-def _null_async_context():
-    @contextlib.asynccontextmanager
-    async def _manager():
-        yield
-
-    return _manager()
+def _new_score_semaphore() -> asyncio.Semaphore:
+    # verifiers.Rubric.score_rollout re-enters the same async context once per
+    # reward function, so the placeholder must be reusable.
+    return asyncio.Semaphore(1)
 
 
 def get_default_renderer_name(model_name: str, *, disable_thinking: bool) -> str:
@@ -1026,7 +1023,7 @@ class DiplomacyMessageEnv(MessageEnv):
         rubric = _get_rubric_for_environment(self.environment_kind)
         if not state.get("completion"):
             state["completion"] = self.history[len(self.initial_messages) :]
-        await rubric.score_rollout(state, score_sem=_null_async_context())
+        await rubric.score_rollout(state, score_sem=_new_score_semaphore())
         reward = float(state.get("reward") or 0.0)
         metrics = {
             f"rubric/{key}": float(value)
@@ -1170,11 +1167,12 @@ class DiplomacyEnvGroupBuilder(EnvGroupBuilder):
         enable_logging: bool,
     ) -> TrajectoryGroup | None:
         del do_remove_constant_reward_groups
-        runner = (
-            get_trajectory_runner(self.rollout_runner_id)
-            if self.rollout_runner_id is not None
-            else LocalTrajectorySandboxRunner()
-        )
+        if self.rollout_runner_id is None:
+            raise RuntimeError(
+                "DiplomacyEnvGroupBuilder requires a registered Modal rollout runner. "
+                "This training stack no longer falls back to local rollouts."
+            )
+        runner = get_trajectory_runner(self.rollout_runner_id)
         group_id = f"{self.datum.get('example_id', 'example')}:{uuid.uuid4().hex}"
         requests = [
             TrajectoryRolloutRequest(

@@ -24,7 +24,7 @@ If you want to train a strong agent, the model is only one part of the story. Th
 
 For Sedona Marketplace, that is the point. The monthly evaluation is not just a scorecard. It is the training ground. If you can define a clean task, expose the right tools, reward the right behaviors, and avoid reward hacking, you can train a useful agent. If you get those pieces wrong, a stronger base model will still learn the wrong thing.
 
-This repo is already a good teaching substrate because it contains two distinct Diplomacy environments:
+This repo is a good teaching substrate because it contains two distinct Diplomacy environments:
 
 - a tool-accuracy environment that isolates mechanical harness use
 - a full-press environment that requires coordination and checks an actual post-adjudication outcome
@@ -143,7 +143,7 @@ In this repo, grading is implemented as Verifiers rubric functions:
 - tool-accuracy reward is a weighted combination of protocol and submission metrics
 - full-press reward is gated by protocol correctness and then decided by whether the desired transition target is satisfied
 
-This is already the correct shape for RL:
+This is the correct shape for RL:
 
 - process signals where you need dense feedback
 - outcome signals where you care about the final objective
@@ -272,7 +272,7 @@ That is the Verifiers mental model you should teach:
 - **tools** define the action surface
 - **rubric** defines what success means
 
-The current tool-accuracy recipe uses all four.
+The tool-accuracy recipe uses all four.
 
 #### How the RLM harness fits in
 
@@ -347,7 +347,7 @@ for update in range(num_updates):
 
 > **Recommended training architecture**
 >
-> Start by freezing the background counterpart policies and only training the tracked policy. The environment is already multi-agent, but your first training target should be single-policy competence inside a stable world.
+> Start by freezing the background counterpart policies and only training the tracked policy. The environment is multi-agent, but your first training target should be single-policy competence inside a stable world.
 
 #### What "good" looks like
 
@@ -364,7 +364,7 @@ If the policy cannot do that, do not move on to Recipe 2.
 
 Recipe 2 extends the environment from "use the harness correctly" to "use the harness to achieve a board objective through another agent."
 
-The current repo already contains the right skeleton for this stage: the `full_press` environment.
+The repo contains the right skeleton for this stage: the `full_press` environment.
 
 #### What changes from Recipe 1
 
@@ -381,7 +381,7 @@ This makes the task harder in exactly the right ways:
 - the horizon is longer
 - the final reward is sparser
 - the quality of the messaging matters
-- the environment now cares about real state transitions, not only local protocol satisfaction
+- the environment cares about real state transitions, not only local protocol satisfaction
 
 ```mermaid
 flowchart TD
@@ -533,7 +533,7 @@ The root policy:
 - delegates narrower subproblems to sub-LLMs
 - has those sub-LLMs use focused tools
 
-That is why it is fair to describe the current harness as RLM-style:
+That is why it is fair to describe the harness as RLM-style:
 
 - recursive language-model delegation is part of the action interface
 - the agent is not reasoning in one flat completion
@@ -641,7 +641,7 @@ Use a training loop with three cadences:
 - **medium loop**: checkpoint the adapter-trained policy
 - **slow loop**: run held-out evaluation with the Verifiers environment family
 
-That is enough to make the current repo trainable without changing its environment design.
+That is enough to make the repo trainable without changing its environment design.
 
 ### D. Verifiers + Tinker for Diplomacy
 
@@ -756,7 +756,7 @@ Do not collapse all reward into a single late binary number if you want Recipe 2
 
 Do not rebuild the Diplomacy runtime separately inside Tinker.
 
-Do not train the tracked agent and all background actors at the same time until the single-policy curriculum is already stable. Otherwise you will not know whether failures come from the policy, the counterparts, or the reward function.
+Do not train the tracked agent and all background actors at the same time until the single-policy curriculum is stable. Otherwise you will not know whether failures come from the policy, the counterparts, or the reward function.
 
 ## Closing Notes
 

@@ -13,7 +13,6 @@ from tinker_training.diplomacy_adapter import (
     build_actor_configs,
 )
 from tinker_training.rollout_backends import (
-    LocalTrajectorySandboxRunner,
     ModalTrajectorySandboxRunner,
     TrajectoryRolloutRequest,
 )
@@ -54,16 +53,6 @@ def _build_request():
         trajectory_index=0,
         group_id="live-test",
     )
-
-
-def test_local_runner_live_smoke() -> None:
-    request = _build_request()
-    runner = LocalTrajectorySandboxRunner()
-    result = asyncio.run(runner.run_trajectory(request))
-    assert result.failure_kind is None
-    assert result.trajectory is not None
-
-
 def test_modal_runner_live_smoke() -> None:
     pytest.importorskip("modal")
     request = _build_request()

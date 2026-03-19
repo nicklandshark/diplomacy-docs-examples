@@ -12,6 +12,7 @@ from tinker_training.diplomacy_adapter import (
     DiplomacyEnvGroupBuilder,
     OpenRouterHeaders,
     RuntimePolicyConfig,
+    _new_score_semaphore,
     build_actor_configs,
 )
 from tinker_training.rollout_backends import (
@@ -107,6 +108,17 @@ def test_group_builder_delegates_to_registered_runner() -> None:
     assert len(trajectory_group.trajectories_G) == 3
     assert all(req.sampling_ref.sampler_path == "sampler://test" for req in fake_runner.requests)
     assert all(metrics["rollout/backend_fake"] == 1.0 for metrics in trajectory_group.metrics_G)
+
+
+@pytest.mark.asyncio
+async def test_score_semaphore_placeholder_is_reusable() -> None:
+    score_sem = _new_score_semaphore()
+
+    async with score_sem:
+        pass
+
+    async with score_sem:
+        pass
 
 
 @pytest.mark.asyncio

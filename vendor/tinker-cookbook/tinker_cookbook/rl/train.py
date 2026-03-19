@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import os
 import re
@@ -113,6 +114,56 @@ def _sanitize_filename_component(text: str) -> str:
     """Make a safe filename component."""
     sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "_", text)
     return sanitized.strip("._") or "unnamed"
+
+
+def _bootstrap_sampling_checkpoint_name(*, log_path: str, start_batch: int) -> str:
+    if start_batch == 0:
+        return f"{start_batch:06d}"
+    stage_label = _sanitize_filename_component(os.path.basename(log_path))
+    return f"{start_batch:06d}-{stage_label}-bootstrap-{int(time.time())}"
+
+
+@scope
+async def _bootstrap_sampling_sampler_path(
+    *,
+    cfg: Config,
+    training_client: tinker.TrainingClient,
+    start_batch: int,
+) -> str:
+    existing_sampler_ckpt = checkpoint_utils.get_last_checkpoint(
+        cfg.log_path,
+        required_key="sampler_path",
+    )
+    if existing_sampler_ckpt is not None and existing_sampler_ckpt.get("batch") == start_batch:
+        sampler_path = existing_sampler_ckpt["sampler_path"]
+        logger.info("Reusing sampler checkpoint %s for batch %s", sampler_path, start_batch)
+        return sampler_path
+
+    checkpoint_name = _bootstrap_sampling_checkpoint_name(
+        log_path=cfg.log_path,
+        start_batch=start_batch,
+    )
+    sampler_future = await training_client.save_weights_for_sampler_async(
+        checkpoint_name,
+        ttl_seconds=cfg.ttl_seconds,
+    )
+    sampler_result = await sampler_future.result_async()
+    sampler_path = sampler_result.path
+
+    os.makedirs(cfg.log_path, exist_ok=True)
+    with open(os.path.join(cfg.log_path, "checkpoints.jsonl"), "a") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "name": checkpoint_name,
+                    "batch": start_batch,
+                    "sampler_path": sampler_path,
+                }
+            )
+            + "\n"
+        )
+
+    return sampler_path
 
 
 def _maybe_export_rollout_summary_jsonl(
@@ -718,18 +769,15 @@ async def do_async_training(
     trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | None]()
 
     # Initial sampling client to use
-    path_dict = await checkpoint_utils.save_checkpoint_async(
+    sampler_path = await _bootstrap_sampling_sampler_path(
+        cfg=cfg,
         training_client=training_client,
-        name=f"{start_batch:06d}",
-        log_path=cfg.log_path,
-        loop_state={"batch": start_batch},
-        kind="both",
-        ttl_seconds=cfg.ttl_seconds,
+        start_batch=start_batch,
     )
 
     # This will be updated by the training loop
-    sampling_client = training_client.create_sampling_client(path_dict["sampler_path"])
-    sampling_ref = _build_sampling_ref(cfg, path_dict["sampler_path"])
+    sampling_client = training_client.create_sampling_client(sampler_path)
+    sampling_ref = _build_sampling_ref(cfg, sampler_path)
     sampling_client_step = start_batch
     sampling_client_updated_event = asyncio.Event()
     sampling_client_updated_event.set()
@@ -1274,16 +1322,16 @@ async def do_sync_training(
     tokenizer: Tokenizer,
 ):
     """Implements fully synchronous on-policy training"""
-    # Initial sampling client
-    sampling_client, sampling_ref, _ = await save_checkpoint_and_get_sampling_client(
-        cfg,
-        training_client,
-        start_batch,
-        cfg.log_path,
-        cfg.save_every,
-        start_batch,
-        cfg.ttl_seconds,
+    # Initial sampling client. Reuse or uniquely bootstrap the sampler checkpoint
+    # at ``start_batch`` so resumed stages do not block on saving the same
+    # sampler weights name again during curriculum handoff.
+    sampler_path = await _bootstrap_sampling_sampler_path(
+        cfg=cfg,
+        training_client=training_client,
+        start_batch=start_batch,
     )
+    sampling_client = training_client.create_sampling_client(sampler_path)
+    sampling_ref = _build_sampling_ref(cfg, sampler_path)
 
     for i_batch in range(start_batch, end_batch):
         metrics = {
