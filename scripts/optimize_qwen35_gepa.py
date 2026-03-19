@@ -86,7 +86,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--phase",
         required=True,
-        choices=("screen", "optimize", "report", "compare", "train_smoke"),
+        choices=("screen", "repair_screen", "optimize", "report", "compare", "train_smoke"),
     )
     parser.add_argument("--model-name", default=DEFAULT_MODEL)
     parser.add_argument("--environment", choices=("tool_accuracy", "full_press"), default=DEFAULT_ENVIRONMENT)
@@ -110,6 +110,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--helper-http-referer", default=DEFAULT_HELPER_HTTP_REFERER)
     parser.add_argument("--helper-x-title", default=DEFAULT_HELPER_X_TITLE)
     parser.add_argument("--prompt-candidate-paths", nargs="*", default=None)
+    parser.add_argument("--screen-dir", default=None)
     parser.add_argument("--seed-pool", default="fullpress_screen")
     parser.add_argument("--report-workers", type=int, default=DEFAULT_REPORT_WORKERS)
     parser.add_argument("--per-seed-timeout-seconds", type=float, default=DEFAULT_PER_SEED_TIMEOUT_SECONDS)
@@ -952,6 +953,70 @@ def run_screen_phase(args: argparse.Namespace) -> None:
     print(json.dumps(ranked_entries[: args.top_k], indent=2))
 
 
+def repair_saved_screen(
+    *,
+    screen_dir: Path,
+    seeds: Sequence[int],
+    top_k: int,
+) -> list[dict[str, Any]]:
+    if not screen_dir.exists():
+        raise RuntimeError(f"Screen directory does not exist: {screen_dir}")
+    ranked_entries: list[dict[str, Any]] = []
+    for config_dir in sorted(path for path in screen_dir.iterdir() if path.is_dir()):
+        preset_path = config_dir / "preset.json"
+        if not preset_path.exists():
+            continue
+        rows = load_completed_rows(output_dir=config_dir, seeds=seeds)
+        if rows is None:
+            continue
+        preset = load_preset(preset_path)
+        summary = summarize_rows(rows)
+        taxonomy = build_taxonomy_summary(rows)
+        patterns = build_pattern_summary(rows)
+        review = build_manual_review(rows)
+        write_json(config_dir / "summary.json", summary)
+        write_json(config_dir / "taxonomy.json", taxonomy)
+        write_json(config_dir / "patterns.json", patterns)
+        write_json(config_dir / "review.json", review)
+        ranked_entries.append(
+            {
+                "preset_path": str(preset_path),
+                "summary_path": str(config_dir / "summary.json"),
+                "taxonomy_path": str(config_dir / "taxonomy.json"),
+                "patterns_path": str(config_dir / "patterns.json"),
+                "review_path": str(config_dir / "review.json"),
+                "rank_key": rank_screen_results(summary, preset.environment),
+                "summary": summary,
+                "taxonomy": taxonomy,
+                "patterns": patterns,
+                "review": review,
+            }
+        )
+    ranked_entries.sort(key=lambda entry: entry["rank_key"], reverse=True)
+    for rank, entry in enumerate(ranked_entries[:top_k], start=1):
+        preset = load_preset(Path(entry["preset_path"]))
+        save_preset(screen_dir / f"top_{rank}_preset.json", preset)
+    write_json(screen_dir / "ranked_results.json", ranked_entries)
+    return ranked_entries
+
+
+def run_repair_screen_phase(args: argparse.Namespace) -> None:
+    _, seeds = resolve_seed_pool(args.seed_pool)
+    screen_dir = (
+        Path(args.screen_dir)
+        if args.screen_dir
+        else Path(args.run_dir)
+        / "screen"
+        / (args.tag or slugify(f"{args.model_name}-{args.environment}-{args.seed_pool}"))
+    )
+    ranked_entries = repair_saved_screen(
+        screen_dir=screen_dir,
+        seeds=seeds,
+        top_k=args.top_k,
+    )
+    print(json.dumps(ranked_entries[: args.top_k], indent=2))
+
+
 class GEPAPromptEvaluator:
     def __init__(
         self,
@@ -1392,6 +1457,9 @@ def main() -> None:
     args = parse_args()
     if args.phase == "screen":
         run_screen_phase(args)
+        return
+    if args.phase == "repair_screen":
+        run_repair_screen_phase(args)
         return
     if args.phase == "optimize":
         run_optimize_phase(args)

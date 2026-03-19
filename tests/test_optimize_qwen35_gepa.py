@@ -8,6 +8,7 @@ from scripts.optimize_qwen35_gepa import (
     is_transient_seed_error,
     load_completed_rows,
     load_metric_cache,
+    repair_saved_screen,
     record_metric_call,
     resolve_reflection_lm,
 )
@@ -351,3 +352,129 @@ def test_gepa_prompt_evaluator_uses_cached_metric_without_starting_runner(monkey
     assert score == 0.25
     assert payload["seed"] == 87
     assert started["value"] is False
+
+
+def test_repair_saved_screen_rewrites_ranked_results_from_cached_rows(tmp_path) -> None:
+    screen_dir = tmp_path / "screen"
+    config_a = screen_dir / "001-config-a"
+    config_b = screen_dir / "002-config-b"
+    for config in (config_a, config_b):
+        (config / "rows").mkdir(parents=True)
+
+    preset_a = ExperimentPreset(
+        model_name="Qwen/Qwen3.5-27B",
+        environment="full_press",
+        renderer_name="qwen3_5_disable_thinking",
+        disable_thinking=True,
+        temperature=1.0,
+        max_turns=10,
+        actor_max_turns=6,
+        session_timeout_seconds=120.0,
+        max_tokens=512,
+        tracked_instruction_block="prompt-a",
+    )
+    preset_b = ExperimentPreset(
+        model_name="Qwen/Qwen3-30B-A3B-Instruct-2507",
+        environment="full_press",
+        renderer_name="qwen3_instruct",
+        disable_thinking=False,
+        temperature=1.0,
+        max_turns=14,
+        actor_max_turns=6,
+        session_timeout_seconds=120.0,
+        max_tokens=512,
+        tracked_instruction_block="prompt-b",
+    )
+    (config_a / "preset.json").write_text(json.dumps(preset_a.to_json()))
+    (config_b / "preset.json").write_text(json.dumps(preset_b.to_json()))
+
+    row_a1 = SeedResult(
+        seed=85,
+        status="ok",
+        execution_backend="tinker_modal",
+        score=0.0,
+        reward=0.0,
+        gate=0.0,
+        transition_target=0.0,
+        relevant_submission=1.0,
+        rejected_tool_calls=0.0,
+        wait_count=1,
+        read_conversation_count=1,
+        compact_order_error=False,
+        has_think_close=False,
+        turns=6,
+        max_turns=10,
+        wall_time_seconds=10.0,
+        dominant_failure="gate_fail_after_legal_submission",
+    )
+    row_a2 = SeedResult(
+        seed=86,
+        status="ok",
+        execution_backend="tinker_modal",
+        score=0.0,
+        reward=0.0,
+        gate=0.0,
+        transition_target=0.0,
+        relevant_submission=1.0,
+        rejected_tool_calls=1.0,
+        wait_count=0,
+        read_conversation_count=1,
+        compact_order_error=False,
+        has_think_close=False,
+        turns=6,
+        max_turns=10,
+        wall_time_seconds=9.0,
+        dominant_failure="rejected_tool_call",
+    )
+    row_b1 = SeedResult(
+        seed=85,
+        status="ok",
+        execution_backend="tinker_modal",
+        score=0.85,
+        reward=0.85,
+        gate=0.0,
+        transition_target=1.0,
+        relevant_submission=1.0,
+        rejected_tool_calls=0.0,
+        wait_count=0,
+        read_conversation_count=1,
+        compact_order_error=False,
+        has_think_close=False,
+        turns=6,
+        max_turns=14,
+        wall_time_seconds=8.0,
+        dominant_failure="gate_fail_after_legal_submission",
+    )
+    row_b2 = SeedResult(
+        seed=86,
+        status="ok",
+        execution_backend="tinker_modal",
+        score=1.0,
+        reward=1.0,
+        gate=1.0,
+        transition_target=1.0,
+        relevant_submission=1.0,
+        rejected_tool_calls=0.0,
+        wait_count=0,
+        read_conversation_count=1,
+        compact_order_error=False,
+        has_think_close=False,
+        turns=5,
+        max_turns=14,
+        wall_time_seconds=7.0,
+        dominant_failure=None,
+    )
+    (config_a / "rows" / "seed_0085.json").write_text(json.dumps(row_a1.to_json()))
+    (config_a / "rows" / "seed_0086.json").write_text(json.dumps(row_a2.to_json()))
+    (config_b / "rows" / "seed_0085.json").write_text(json.dumps(row_b1.to_json()))
+    (config_b / "rows" / "seed_0086.json").write_text(json.dumps(row_b2.to_json()))
+
+    ranked = repair_saved_screen(screen_dir=screen_dir, seeds=[85, 86], top_k=1)
+
+    assert len(ranked) == 2
+    assert ranked[0]["preset_path"].endswith("002-config-b/preset.json")
+    assert (screen_dir / "top_1_preset.json").exists()
+    ranked_results = json.loads((screen_dir / "ranked_results.json").read_text())
+    assert ranked_results[0]["summary"]["mean_reward"] == 0.925
+    assert (config_a / "review.json").exists()
+    assert (config_b / "patterns.json").exists()
