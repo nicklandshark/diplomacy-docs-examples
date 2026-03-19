@@ -384,5 +384,9 @@ def test_pattern_summary_and_background_include_trace_signals() -> None:
     assert "narration before tool calls is common" in background
     assert "many trajectories submit legal orders but still miss the objective" in background
     assert "keep non-essential units on simple legal holds" in background
+    assert "request the exact support or hold order" in background
+    assert "actual occupation of the target province after adjudication" in background
     assert "repeated submit_orders attempts are common" in background
     assert "do not resubmit variant order sets unless the previous submit_orders call was explicitly rejected" in background
+    assert "do not call read_legal_orders again or submit a second variant" in background
+    assert "once a legal submit_orders call succeeds, finish immediately" in background

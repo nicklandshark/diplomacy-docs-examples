@@ -424,6 +424,12 @@ def review_background_from_taxonomy(
             lines.append(
                 "- when only one move is central to the objective, keep non-essential units on simple legal holds unless another order clearly supports that target."
             )
+            lines.append(
+                "- when coordination is required, the single message should request the exact support or hold order that makes the target adjudicate successfully."
+            )
+            lines.append(
+                "- optimize for actual occupation of the target province after adjudication, not just for submitting the named target move unsupported."
+            )
         if pattern_summary.get("multi_submit_rate", 0.0) >= 0.1:
             lines.append(
                 f"- repeated submit_orders attempts are common ({pattern_summary['multi_submit_rate']:.0%}); after a rejection, rebuild from scratch with exactly one order per orderable unit."
@@ -431,9 +437,16 @@ def review_background_from_taxonomy(
             lines.append(
                 "- do not resubmit variant order sets unless the previous submit_orders call was explicitly rejected by the environment."
             )
+            lines.append(
+                "- after a submit_orders call succeeds, do not call read_legal_orders again or submit a second variant unless the environment explicitly rejected the prior submit."
+            )
         if pattern_summary.get("read_conversation_after_legal_before_submit_rate", 0.0) >= 0.1:
             lines.append(
                 "- do not re-open conversations after reading legal orders unless the task explicitly requires it; move directly to submission."
+            )
+        if pattern_summary.get("finish_after_submit_rate", 1.0) < 0.85:
+            lines.append(
+                f"- too many trajectories keep acting after a valid submission ({1.0 - pattern_summary['finish_after_submit_rate']:.0%}); once a legal submit_orders call succeeds, finish immediately unless the environment rejected it or new task-critical information arrived."
             )
     if extra_lines:
         lines.extend(extra_lines)
