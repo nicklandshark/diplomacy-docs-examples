@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 
 from scripts.optimize_qwen35_gepa import (
@@ -8,6 +9,7 @@ from scripts.optimize_qwen35_gepa import (
     is_transient_seed_error,
     load_completed_rows,
     load_metric_cache,
+    make_screen_presets,
     repair_saved_screen,
     record_metric_call,
     resolve_reflection_lm,
@@ -478,3 +480,47 @@ def test_repair_saved_screen_rewrites_ranked_results_from_cached_rows(tmp_path) 
     assert ranked_results[0]["summary"]["mean_reward"] == 0.925
     assert (config_a / "review.json").exists()
     assert (config_b / "patterns.json").exists()
+
+
+def test_make_screen_presets_overrides_environment_for_loaded_presets(tmp_path) -> None:
+    preset = ExperimentPreset(
+        model_name="Qwen/Qwen3-30B-A3B-Instruct-2507",
+        environment="tool_accuracy",
+        renderer_name="qwen3_instruct",
+        disable_thinking=False,
+        temperature=1.0,
+        max_turns=10,
+        actor_max_turns=6,
+        session_timeout_seconds=120.0,
+        max_tokens=512,
+        tracked_instruction_block="prompt-a",
+    )
+    preset_path = tmp_path / "preset.json"
+    preset_path.write_text(json.dumps(preset.to_json()))
+
+    args = argparse.Namespace(
+        preset_paths=[str(preset_path)],
+        model_name="Qwen/Qwen3-30B-A3B-Instruct-2507",
+        environment="full_press",
+        renderer_name=None,
+        disable_thinking=False,
+        temperature=1.0,
+        temperatures=None,
+        max_turns=10,
+        max_turns_options=None,
+        actor_max_turns=6,
+        actor_max_turns_options=None,
+        prompt_candidate_paths=None,
+        session_timeout_seconds=120.0,
+        max_tokens=512,
+        helper_model="openai/gpt-5.4-mini",
+        helper_base_url="https://openrouter.ai/api/v1",
+        helper_api_key_env_var="OPENROUTER_API_KEY",
+        helper_http_referer="https://local.codex",
+        helper_x_title="diplomacy-gepa-bench",
+    )
+
+    presets = make_screen_presets(args)
+
+    assert len(presets) == 1
+    assert presets[0].environment == "full_press"

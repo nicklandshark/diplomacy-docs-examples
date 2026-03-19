@@ -89,7 +89,7 @@ def parse_args() -> argparse.Namespace:
         choices=("screen", "repair_screen", "optimize", "report", "compare", "train_smoke"),
     )
     parser.add_argument("--model-name", default=DEFAULT_MODEL)
-    parser.add_argument("--environment", choices=("tool_accuracy", "full_press"), default=DEFAULT_ENVIRONMENT)
+    parser.add_argument("--environment", choices=("tool_accuracy", "full_press"), default=None)
     parser.add_argument("--preset-path", default=None)
     parser.add_argument("--preset-paths", nargs="*", default=None)
     parser.add_argument("--preset-a-path", default=None)
@@ -173,6 +173,7 @@ def build_actor_runtime(preset: ExperimentPreset) -> ActorRuntimeConfig:
 
 
 def build_default_preset(args: argparse.Namespace) -> ExperimentPreset:
+    environment = args.environment or DEFAULT_ENVIRONMENT
     renderer_name = args.renderer_name or get_default_renderer_name(
         args.model_name,
         disable_thinking=args.disable_thinking,
@@ -180,7 +181,7 @@ def build_default_preset(args: argparse.Namespace) -> ExperimentPreset:
     tracked_instruction_block = get_default_tracked_instruction_block(default_idle_sleep_seconds=0.5)
     return ExperimentPreset(
         model_name=args.model_name,
-        environment=args.environment,
+        environment=environment,
         renderer_name=renderer_name,
         disable_thinking=args.disable_thinking,
         temperature=args.temperature,
@@ -809,6 +810,7 @@ def make_screen_presets(args: argparse.Namespace) -> list[ExperimentPreset]:
         ):
             candidate = replace(
                 base_preset,
+                environment=args.environment or base_preset.environment,
                 renderer_name=renderer_name,
                 disable_thinking="disable_thinking" in renderer_name,
                 temperature=temperature,
@@ -910,9 +912,10 @@ def run_screen_phase(args: argparse.Namespace) -> None:
     ensure_required_envs()
     _, seeds = resolve_seed_pool(args.seed_pool)
     run_dir = Path(args.run_dir)
-    screen_dir = run_dir / "screen" / (args.tag or slugify(f"{args.model_name}-{args.environment}-{args.seed_pool}"))
-    screen_dir.mkdir(parents=True, exist_ok=True)
     presets = make_screen_presets(args)
+    screen_environment = presets[0].environment if presets else (args.environment or DEFAULT_ENVIRONMENT)
+    screen_dir = run_dir / "screen" / (args.tag or slugify(f"{args.model_name}-{screen_environment}-{args.seed_pool}"))
+    screen_dir.mkdir(parents=True, exist_ok=True)
     ranked_entries: list[dict[str, Any]] = []
     for index, preset in enumerate(presets, start=1):
         config_dir = screen_dir / f"{index:03d}-{screen_preset_slug(preset)}"
@@ -1002,12 +1005,13 @@ def repair_saved_screen(
 
 def run_repair_screen_phase(args: argparse.Namespace) -> None:
     _, seeds = resolve_seed_pool(args.seed_pool)
+    screen_environment = args.environment or DEFAULT_ENVIRONMENT
     screen_dir = (
         Path(args.screen_dir)
         if args.screen_dir
         else Path(args.run_dir)
         / "screen"
-        / (args.tag or slugify(f"{args.model_name}-{args.environment}-{args.seed_pool}"))
+        / (args.tag or slugify(f"{args.model_name}-{screen_environment}-{args.seed_pool}"))
     )
     ranked_entries = repair_saved_screen(
         screen_dir=screen_dir,
