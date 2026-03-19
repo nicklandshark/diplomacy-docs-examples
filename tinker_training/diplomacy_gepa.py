@@ -370,6 +370,54 @@ def _looks_like_counterpart_no_reply(result: SeedResult) -> bool:
     return any(pattern in searchable for pattern in _NO_REPLY_PATTERNS)
 
 
+def _first_turn_with_tool(row: SeedResult, tool_name: str) -> int | None:
+    for record in row.turn_records:
+        if tool_name in record.tools:
+            return record.turn_index
+    return None
+
+
+def _first_nonempty_text_before_tool(action_text: str) -> str:
+    prefix, _, _ = action_text.partition("<tool_call>")
+    return prefix.strip()
+
+
+def _trajectory_signals(row: SeedResult) -> dict[str, Any]:
+    send_turn = _first_turn_with_tool(row, "send_message")
+    read_turn = _first_turn_with_tool(row, "read_conversation")
+    legal_turn = _first_turn_with_tool(row, "read_legal_orders")
+    submit_turn = _first_turn_with_tool(row, "submit_orders")
+    finish_turn = _first_turn_with_tool(row, "finish")
+    post_legal_turn = None
+    post_legal_has_submit = False
+    post_legal_narrates = False
+    if legal_turn is not None:
+        for record in row.turn_records:
+            if record.turn_index <= legal_turn:
+                continue
+            post_legal_turn = record.turn_index
+            post_legal_has_submit = "submit_orders" in record.tools
+            post_legal_narrates = bool(_first_nonempty_text_before_tool(record.action_text))
+            break
+    return {
+        "first_send_message_turn": send_turn,
+        "first_read_conversation_turn": read_turn,
+        "first_read_legal_orders_turn": legal_turn,
+        "first_submit_orders_turn": submit_turn,
+        "first_finish_turn": finish_turn,
+        "contact_before_read": (
+            send_turn is not None and (read_turn is None or send_turn < read_turn)
+        ),
+        "respected_wait_hard_cap": row.wait_count <= 2,
+        "post_legal_next_turn": post_legal_turn,
+        "post_legal_next_turn_has_submit": post_legal_has_submit,
+        "post_legal_next_turn_narrates": post_legal_narrates,
+        "finish_after_submit": (
+            submit_turn is not None and finish_turn is not None and finish_turn > submit_turn
+        ),
+    }
+
+
 def _review_entry(row: SeedResult) -> dict[str, Any]:
     return {
         "seed": row.seed,
@@ -381,6 +429,7 @@ def _review_entry(row: SeedResult) -> dict[str, Any]:
         "relevant_submission": row.relevant_submission,
         "dominant_failure": row.dominant_failure,
         "artifact_path": row.artifact_path,
+        "trajectory_signals": _trajectory_signals(row),
         "recent_trace": [
             {
                 "turn_index": record.turn_index,

@@ -152,6 +152,59 @@ def test_summary_taxonomy_and_review_outputs() -> None:
     assert len(review["failed"]) == 1
     assert len(review["successful"]) == 1
     assert "recent_trace" in review["failed"][0]
+    assert "trajectory_signals" in review["failed"][0]
+
+
+def test_manual_review_includes_contact_and_post_legal_signals() -> None:
+    row = _row(seed=51, reward=0.0, relevant_submission=1.0)
+    row = replace(
+        row,
+        turn_records=[
+            TurnRecord(
+                turn_index=0,
+                tools=["send_message"],
+                action_text="<tool_call><function=send_message></function></tool_call>",
+                observation_excerpt="",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+            TurnRecord(
+                turn_index=1,
+                tools=["read_legal_orders"],
+                action_text="<tool_call><function=read_legal_orders></function></tool_call>",
+                observation_excerpt="",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+            TurnRecord(
+                turn_index=2,
+                tools=["submit_orders"],
+                action_text="<tool_call><function=submit_orders></function></tool_call>",
+                observation_excerpt="",
+                reward=0.0,
+                episode_done=False,
+                metrics={},
+            ),
+            TurnRecord(
+                turn_index=3,
+                tools=["finish"],
+                action_text="<tool_call><function=finish></function></tool_call>",
+                observation_excerpt="",
+                reward=0.0,
+                episode_done=True,
+                metrics={},
+            ),
+        ],
+        dominant_failure="gate_fail_after_legal_submission",
+    )
+    review = build_manual_review([row], failed_limit=1, success_limit=1)
+    signals = review["failed"][0]["trajectory_signals"]
+    assert signals["contact_before_read"] is True
+    assert signals["post_legal_next_turn_has_submit"] is True
+    assert signals["post_legal_next_turn_narrates"] is False
+    assert signals["finish_after_submit"] is True
 
 
 def test_seed_result_json_keeps_failure_bucket_alias() -> None:
