@@ -1185,6 +1185,10 @@ def run_optimize_phase(args: argparse.Namespace) -> None:
                 "- stray '</think>' markup before tool calls",
                 "- finishing too late",
                 "- missing best-effort submission after no counterpart reply",
+                "- read_conversation using the wrong participant list instead of only the task counterpart",
+                "- narration before tool calls even when the turn should start directly with a tool",
+                "- waiting for extra confirmation after the counterpart already provided commitment or anchor orders",
+                "- spending turns after read_legal_orders on more narration or extra reads instead of immediate submit_orders",
             ],
         )
         result = optimize_anything(
