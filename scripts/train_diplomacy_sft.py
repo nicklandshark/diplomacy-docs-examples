@@ -8,6 +8,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VENDORED_COOKBOOK_ROOT = REPO_ROOT / "vendor" / "tinker-cookbook"
@@ -16,12 +17,10 @@ if str(VENDORED_COOKBOOK_ROOT) not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tinker_cookbook import checkpoint_utils
-from tinker_cookbook.supervised import train as supervised_train
-from tinker_cookbook.supervised.data import FromConversationFileBuilder
-from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
-
 from tinker_training.diplomacy_adapter import get_default_renderer_name
+
+if TYPE_CHECKING:
+    from tinker_cookbook.supervised import train as supervised_train
 
 logging.basicConfig(
     level=logging.INFO,
@@ -92,7 +91,11 @@ def resolve_log_path(args: argparse.Namespace) -> Path:
     return Path(args.log_root).expanduser().resolve() / run_name
 
 
-def build_config(args: argparse.Namespace, *, log_path: Path) -> supervised_train.Config:
+def build_config(args: argparse.Namespace, *, log_path: Path) -> "supervised_train.Config":
+    from tinker_cookbook.supervised import train as supervised_train
+    from tinker_cookbook.supervised.data import FromConversationFileBuilder
+    from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
+
     renderer_name = args.renderer_name or get_default_renderer_name(
         args.model_name,
         disable_thinking=True,
@@ -128,6 +131,8 @@ def build_config(args: argparse.Namespace, *, log_path: Path) -> supervised_trai
 
 
 def write_manifest(*, args: argparse.Namespace, log_path: Path) -> Path:
+    from tinker_cookbook import checkpoint_utils
+
     checkpoint = checkpoint_utils.get_last_checkpoint(str(log_path), required_key="state_path")
     manifest = {
         "model_name": args.model_name,
@@ -149,6 +154,8 @@ def main() -> int:
     log_path = resolve_log_path(args)
     log_path.mkdir(parents=True, exist_ok=True)
     config = build_config(args, log_path=log_path)
+    from tinker_cookbook.supervised import train as supervised_train
+
     asyncio.run(supervised_train.main(config))
     manifest_path = write_manifest(args=args, log_path=log_path)
     logger.info("SFT manifest written to %s", manifest_path)

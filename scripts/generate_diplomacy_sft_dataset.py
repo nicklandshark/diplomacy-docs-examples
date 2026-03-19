@@ -11,15 +11,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-from openai import AsyncOpenAI
-from tinker_cookbook.tool_use.types import ToolInput
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VENDORED_COOKBOOK_ROOT = REPO_ROOT / "vendor" / "tinker-cookbook"
 if str(VENDORED_COOKBOOK_ROOT) not in sys.path:
     sys.path.insert(0, str(VENDORED_COOKBOOK_ROOT))
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from openai import AsyncOpenAI
+from tinker_cookbook.tool_use.types import ToolInput
 
 from tinker_training.diplomacy_adapter import (
     _build_system_prompt,
