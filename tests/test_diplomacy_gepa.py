@@ -151,6 +151,7 @@ def test_summary_taxonomy_and_review_outputs() -> None:
     review = build_manual_review([success, failed], failed_limit=1, success_limit=1)
     assert len(review["failed"]) == 1
     assert len(review["successful"]) == 1
+    assert "recent_trace" in review["failed"][0]
 
 
 def test_seed_result_json_keeps_failure_bucket_alias() -> None:

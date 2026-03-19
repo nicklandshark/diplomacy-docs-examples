@@ -381,4 +381,14 @@ def _review_entry(row: SeedResult) -> dict[str, Any]:
         "relevant_submission": row.relevant_submission,
         "dominant_failure": row.dominant_failure,
         "artifact_path": row.artifact_path,
+        "recent_trace": [
+            {
+                "turn_index": record.turn_index,
+                "tools": record.tools,
+                "action_excerpt": record.action_text[:240],
+                "observation_excerpt": record.observation_excerpt[:180],
+                "metrics": record.metrics,
+            }
+            for record in row.turn_records[-3:]
+        ],
     }
